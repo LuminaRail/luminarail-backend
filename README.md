@@ -149,15 +149,17 @@ npx prisma migrate status
 
 ---
 
-## Phase 5A — Settlement Engine Foundation
+---
+
+## Phase 5A & 5B — Live Soroban Testnet Settlement Integration
 
 ### Overview & Security Constraints
-> **Note on Phase 5A**: Live Soroban transaction submission, transaction signing, and secret key custody are **NOT implemented** in Phase 5A. The settlement engine creates durable database records, enforces state transitions, and halts cleanly before live on-chain submission.
+Phase 5B extends the Phase 5A settlement foundation by integrating live **Soroban Testnet settlement execution** via `SorobanSettlementExecutor`. The settlement engine builds, simulates, signs, and submits transactions to Soroban smart contracts on Stellar Testnet, polls RPC for transaction finality, and handles reconciliation cleanly.
 
-- **Network Scope**: Stellar Testnet ONLY.
-- **Non-Custodial Enforcement**: Secret keys, seed phrases (`S...`), and private key signing remain strictly forbidden.
-- **On-Chain Submission Status**: Live Soroban transaction submission is disabled in Phase 5A.
-- **Monetary Safety**: Settlement amounts are derived server-side from `Order` / `Quote` records. Untrusted user inputs for amounts are strictly rejected.
+- **Network Scope**: Stellar Testnet ONLY (`STELLAR_NETWORK=testnet`). Live submission fails closed if network is mainnet, public, production, or unexpected.
+- **Backend Signer Custody**: Testnet settlement signer secret (`STELLAR_SETTLEMENT_SIGNER_SECRET_KEY`) is loaded exclusively from environment variables and is never exposed in logs, audit records, API responses, or database fields.
+- **Pre-Flight Simulation**: Every transaction is simulated via Soroban RPC prior to submission to prevent on-chain failures.
+- **Idempotency Guarantee**: Existing transaction hashes on settlement records prevent duplicate transaction creation on worker retries.
 
 ### Database Model (`Settlement`)
 
@@ -209,20 +211,24 @@ FAILED (terminal)
 REQUIRES_RECONCILIATION (terminal for current phase)
 ```
 
-### Settlement Lifecycle & Worker Responsibilities
+### Phase 5B Soroban Settlement Flow
 
-1. **Order State Check**: Settlement creation only accepts orders in `OrderStatus.SETTLEMENT_PENDING`. Any other state is rejected (`InvalidOrderStateForSettlementError`).
-2. **Idempotent Claiming**: Concurrent creation requests for the same order are guarded by PostgreSQL unique index on `order_id` and Prisma `P2002` error handling.
-3. **Worker Processing (`src/workers/settlement.worker.ts`)**:
-   - Queries `SETTLEMENT_PENDING` orders.
-   - Atomically claims the order and creates a `Settlement` record in `PENDING` status.
-   - Transitions settlement to `SUBMITTING`.
-   - Halts prior to live Stellar network submission.
-4. **Stellar Integration Boundary (`SettlementExecutor`)**:
-   - Abstracts Stellar operations via `SettlementExecutor` interface (`submitSettlement`, `getSettlementStatus`, `confirmSettlement`).
-   - Uses `MockSettlementExecutor` for test environment boundaries.
-
----
+1. **Order Claiming**: `SettlementWorker` queries `SETTLEMENT_PENDING` orders and claims them in `PENDING` status.
+2. **Submitting Transition**: Worker transitions status to `SUBMITTING`.
+3. **Transaction Building & Simulation**:
+   - `SorobanTransactionService` builds Soroban contract invocation (`create_settlement`) on `SettlementVaultContract`.
+   - Simulates transaction via `sorobanClient.simulateTransaction()`.
+   - Assembles simulation footprint and fees into `Transaction`.
+4. **Signing & Submission**:
+   - Signs transaction with `STELLAR_SETTLEMENT_SIGNER_SECRET_KEY`.
+   - Submits to Soroban RPC via `sorobanClient.sendTransaction()`.
+5. **Submitted Transition**:
+   - Persists `stellarTransactionHash` and `submittedAt`.
+   - Transitions status to `SUBMITTED` then `CONFIRMING`.
+6. **Confirmation Polling**:
+   - `SorobanConfirmationService` polls Soroban RPC (`getTransaction`).
+   - Positive on-chain confirmation: transitions status to `COMPLETED`, records `stellarLedger` and `confirmedAt`, and marks the corresponding `Order` as `COMPLETED`.
+   - Timeout / failure: transitions status to `REQUIRES_RECONCILIATION`.
 
 ---
 

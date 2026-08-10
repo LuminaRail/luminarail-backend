@@ -75,6 +75,7 @@ describe('Payment & Webhook Hardening (Security, Concurrency & Idempotency)', ()
       });
       await prisma.payment.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.transaction.deleteMany({ where: { userId: { in: userIds } } });
+      await prisma.settlement.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.order.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.auditLog.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.user.deleteMany({ where: { id: { in: userIds } } });

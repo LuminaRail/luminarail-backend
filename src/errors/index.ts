@@ -152,3 +152,33 @@ export class StellarRpcError extends StellarError {
     super(message, 502, 'STELLAR_RPC_ERROR', details);
   }
 }
+
+export class SorobanSimulationError extends StellarError {
+  constructor(message = 'Soroban transaction simulation failed', details?: unknown) {
+    super(message, 400, 'SOROBAN_SIMULATION_FAILED', details);
+  }
+}
+
+export class SorobanSubmissionError extends StellarError {
+  constructor(message = 'Soroban transaction submission failed', details?: unknown) {
+    super(message, 502, 'SOROBAN_SUBMISSION_FAILED', details);
+  }
+}
+
+export class SorobanConfirmationError extends StellarError {
+  constructor(message = 'Soroban transaction confirmation failed or timed out', details?: unknown) {
+    super(message, 504, 'SOROBAN_CONFIRMATION_FAILED', details);
+  }
+}
+
+export class SorobanSignerConfigError extends StellarError {
+  constructor(message = 'Stellar settlement signer configuration missing or invalid') {
+    super(message, 500, 'SOROBAN_SIGNER_CONFIG_ERROR');
+  }
+}
+
+export class SorobanContractConfigError extends StellarError {
+  constructor(message = 'Soroban contract ID configuration missing or invalid') {
+    super(message, 500, 'SOROBAN_CONTRACT_CONFIG_ERROR');
+  }
+}

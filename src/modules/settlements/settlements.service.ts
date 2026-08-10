@@ -25,18 +25,18 @@ export class SettlementService {
       throw new NotFoundError(`Order not found: ${orderId}`);
     }
 
-    // 2. Strict order status validation: must be SETTLEMENT_PENDING
-    if (order.status !== OrderStatus.SETTLEMENT_PENDING) {
-      throw new InvalidOrderStateForSettlementError(order.status);
-    }
-
-    // 3. Idempotency check: Return existing settlement if present
+    // 2. Idempotency check: Return existing settlement if present
     const existingSettlement = await prisma.settlement.findUnique({
       where: { orderId },
     });
 
     if (existingSettlement) {
       return { settlement: existingSettlement, isDuplicate: true };
+    }
+
+    // 3. Strict order status validation: must be SETTLEMENT_PENDING for new settlement creation
+    if (order.status !== OrderStatus.SETTLEMENT_PENDING) {
+      throw new InvalidOrderStateForSettlementError(order.status);
     }
 
     // 4. Server-derived amount and asset details (derived strictly from Order)
