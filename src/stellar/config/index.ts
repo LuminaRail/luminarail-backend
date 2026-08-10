@@ -26,6 +26,15 @@ export function assertTestnetSafety(): void {
   }
 }
 
+export function assertLiveSettlementTestnetSafety(): void {
+  const currentNetwork = config.stellar.network.toLowerCase();
+  if (currentNetwork !== 'testnet') {
+    throw new StellarNetworkError(
+      `Live settlement submission refused: STELLAR_NETWORK must be 'testnet', but got '${currentNetwork}'. Operations fail closed for non-Testnet environments.`
+    );
+  }
+}
+
 export const stellarConfig = {
   get network(): SupportedStellarNetwork {
     return config.stellar.network.toLowerCase() as SupportedStellarNetwork;

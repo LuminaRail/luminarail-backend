@@ -1,10 +1,11 @@
-import { OrderStatus, SettlementStatus } from '@prisma/client';
+import { OrderStatus, Settlement, SettlementStatus } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { SettlementService } from '../modules/settlements/settlements.service.js';
 import { SettlementExecutor, MockSettlementExecutor } from '../stellar/settlement.executor.js';
 
 export interface ProcessPendingSettlementsOptions {
   batchSize?: number;
+  stopAtSubmitting?: boolean;
 }
 
 export interface ProcessedSettlementResult {
@@ -22,14 +23,14 @@ export class SettlementWorker {
   }
 
   /**
-   * Scans for orders in SETTLEMENT_PENDING and processes settlement work.
-   * Atomically claims/creates settlement work in PENDING, transitions to SUBMITTING,
-   * and stops BEFORE live on-chain submission (Phase 5A Requirement).
+   * Scans for orders in SETTLEMENT_PENDING and processes settlement work through
+   * the full Soroban lifecycle: PENDING -> SUBMITTING -> SUBMITTED -> CONFIRMING -> COMPLETED.
    */
   public async processPendingOrders(
     options: ProcessPendingSettlementsOptions = {}
   ): Promise<ProcessedSettlementResult[]> {
     const batchSize = options.batchSize || 10;
+    const stopAtSubmitting = options.stopAtSubmitting ?? false;
 
     const eligibleOrders = await prisma.order.findMany({
       where: {
@@ -52,22 +53,29 @@ export class SettlementWorker {
           'system-worker'
         );
 
+        let finalStatus = settlement.status;
+
         if (settlement.status === SettlementStatus.PENDING) {
           const submitting = await SettlementService.markSubmitting(settlement.id);
-          results.push({
-            orderId: order.id,
-            settlementId: submitting.settlementId,
-            status: submitting.status,
-            isNew: !isDuplicate,
-          });
-        } else {
-          results.push({
-            orderId: order.id,
-            settlementId: settlement.settlementId,
-            status: settlement.status,
-            isNew: !isDuplicate,
-          });
+          finalStatus = submitting.status;
+
+          if (!stopAtSubmitting) {
+            finalStatus = await this.executeSettlementFlow(submitting);
+          }
+        } else if (!stopAtSubmitting && (
+          settlement.status === SettlementStatus.SUBMITTING ||
+          settlement.status === SettlementStatus.SUBMITTED ||
+          settlement.status === SettlementStatus.CONFIRMING
+        )) {
+          finalStatus = await this.executeSettlementFlow(settlement);
         }
+
+        results.push({
+          orderId: order.id,
+          settlementId: settlement.settlementId,
+          status: finalStatus,
+          isNew: !isDuplicate,
+        });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : 'Worker processing error';
         const existing = await prisma.settlement.findUnique({
@@ -88,28 +96,91 @@ export class SettlementWorker {
   /**
    * Claims and processes a single order settlement work atomically.
    */
-  public async processSingleOrder(orderId: string): Promise<ProcessedSettlementResult> {
+  public async processSingleOrder(
+    orderId: string,
+    options: { stopAtSubmitting?: boolean } = {}
+  ): Promise<ProcessedSettlementResult> {
     const { settlement, isDuplicate } = await SettlementService.createSettlementForOrder(
       orderId,
       'system-worker'
     );
 
+    let finalStatus = settlement.status;
+
     if (settlement.status === SettlementStatus.PENDING) {
       const submitting = await SettlementService.markSubmitting(settlement.id);
-      return {
-        orderId,
-        settlementId: submitting.settlementId,
-        status: submitting.status,
-        isNew: !isDuplicate,
-      };
+      finalStatus = submitting.status;
+
+      if (!options.stopAtSubmitting) {
+        finalStatus = await this.executeSettlementFlow(submitting);
+      }
+    } else if (!options.stopAtSubmitting && (
+      settlement.status === SettlementStatus.SUBMITTING ||
+      settlement.status === SettlementStatus.SUBMITTED ||
+      settlement.status === SettlementStatus.CONFIRMING
+    )) {
+      finalStatus = await this.executeSettlementFlow(settlement);
     }
 
     return {
       orderId,
       settlementId: settlement.settlementId,
-      status: settlement.status,
+      status: finalStatus,
       isNew: !isDuplicate,
     };
+  }
+
+  private async executeSettlementFlow(settlement: Settlement): Promise<SettlementStatus> {
+    let current = settlement;
+
+    // 1. Submit transaction if hash does not exist yet (Idempotency guarantee)
+    if (!current.stellarTransactionHash) {
+      const submission = await this.executor.submitSettlement({
+        settlementId: current.settlementId,
+        orderId: current.orderId,
+        source: current.source || '',
+        destination: current.destination || '',
+        amount: current.amount.toString(),
+        asset: current.asset,
+        contractAddress: current.contractAddress,
+      });
+
+      if (!submission.submitted || !submission.transactionHash) {
+        const err = submission.error || 'Settlement submission failed';
+        if (err.includes('simulation') || err.includes('config') || err.includes('Invalid')) {
+          const failed = await SettlementService.markFailed(current.id, err);
+          return failed.status;
+        } else {
+          const recon = await SettlementService.markRequiresReconciliation(current.id, err);
+          return recon.status;
+        }
+      }
+
+      current = await SettlementService.markSubmitted(current.id, submission.transactionHash);
+    }
+
+    // 2. Transition to CONFIRMING
+    if (current.status === SettlementStatus.SUBMITTED) {
+      current = await SettlementService.markConfirming(current.id);
+    }
+
+    // 3. Poll for transaction confirmation on Soroban RPC
+    if (current.status === SettlementStatus.CONFIRMING && current.stellarTransactionHash) {
+      const confirmation = await this.executor.confirmSettlement(current.stellarTransactionHash);
+
+      if (confirmation.confirmed && confirmation.ledger !== undefined) {
+        const completed = await SettlementService.markCompleted(current.id, confirmation.ledger);
+        return completed.status;
+      } else {
+        const recon = await SettlementService.markRequiresReconciliation(
+          current.id,
+          confirmation.error || 'Settlement confirmation failed'
+        );
+        return recon.status;
+      }
+    }
+
+    return current.status;
   }
 }
 

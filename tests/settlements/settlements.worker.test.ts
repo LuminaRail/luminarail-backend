@@ -74,7 +74,7 @@ describe('SettlementWorker Foundation Tests', () => {
     const mockExecutor = new MockSettlementExecutor();
     const worker = new SettlementWorker(mockExecutor);
 
-    const processed = await worker.processPendingOrders({ batchSize: 10 });
+    const processed = await worker.processPendingOrders({ batchSize: 10, stopAtSubmitting: true });
 
     expect(processed.length).toBeGreaterThanOrEqual(2);
     
@@ -100,7 +100,7 @@ describe('SettlementWorker Foundation Tests', () => {
     const mockExecutor = new MockSettlementExecutor();
     const worker = new SettlementWorker(mockExecutor);
 
-    const processed = await worker.processPendingOrders({ batchSize: 10 });
+    const processed = await worker.processPendingOrders({ batchSize: 10, stopAtSubmitting: true });
 
     const p1 = processed.find((p) => p.orderId === orderId1);
     expect(p1).toBeUndefined(); // No longer matching PENDING condition
@@ -120,7 +120,7 @@ describe('SettlementWorker Foundation Tests', () => {
     });
 
     const worker = new SettlementWorker();
-    const result = await worker.processSingleOrder(newOrder.id);
+    const result = await worker.processSingleOrder(newOrder.id, { stopAtSubmitting: true });
 
     expect(result.orderId).toBe(newOrder.id);
     expect(result.status).toBe(SettlementStatus.SUBMITTING);

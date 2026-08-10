@@ -20,6 +20,21 @@ export const envSchema = z.object({
       message: 'STELLAR_USDC_ISSUER must be a valid Stellar public key address',
     }),
   STELLAR_SETTLEMENT_VAULT_CONTRACT_ID: z.string().optional().default(''),
+  SOROBAN_SETTLEMENT_VAULT_CONTRACT_ID: z.string().optional().default(''),
+  SOROBAN_ESCROW_CONTRACT_ID: z.string().optional().default(''),
+  SOROBAN_FEE_MANAGER_CONTRACT_ID: z.string().optional().default(''),
+  STELLAR_SETTLEMENT_SIGNER_PUBLIC_KEY: z
+    .string()
+    .optional()
+    .refine((val) => !val || StrKey.isValidEd25519PublicKey(val), {
+      message: 'STELLAR_SETTLEMENT_SIGNER_PUBLIC_KEY must be a valid Stellar public key address',
+    }),
+  STELLAR_SETTLEMENT_SIGNER_SECRET_KEY: z
+    .string()
+    .optional()
+    .refine((val) => !val || StrKey.isValidEd25519SecretSeed(val), {
+      message: 'STELLAR_SETTLEMENT_SIGNER_SECRET_KEY must be a valid Stellar secret seed',
+    }),
   JWT_SECRET: z.string().default('dev_secret_change_me_in_production'),
   JWT_EXPIRES_IN: z.string().default('1d'),
 });
@@ -47,7 +62,11 @@ export const config = {
     rpcUrl: envData.STELLAR_RPC_URL,
     horizonUrl: envData.STELLAR_HORIZON_URL,
     usdcIssuer: envData.STELLAR_USDC_ISSUER,
-    settlementVaultContractId: envData.STELLAR_SETTLEMENT_VAULT_CONTRACT_ID,
+    settlementVaultContractId: envData.SOROBAN_SETTLEMENT_VAULT_CONTRACT_ID || envData.STELLAR_SETTLEMENT_VAULT_CONTRACT_ID,
+    escrowContractId: envData.SOROBAN_ESCROW_CONTRACT_ID,
+    feeManagerContractId: envData.SOROBAN_FEE_MANAGER_CONTRACT_ID,
+    signerPublicKey: envData.STELLAR_SETTLEMENT_SIGNER_PUBLIC_KEY,
+    signerSecretKey: envData.STELLAR_SETTLEMENT_SIGNER_SECRET_KEY,
   },
   jwt: {
     secret: envData.JWT_SECRET,
