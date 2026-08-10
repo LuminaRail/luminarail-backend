@@ -1,7 +1,5 @@
-import { Router } from 'express';
-
-export const settlementsRouter = Router();
-
-settlementsRouter.get('/', (_req, res) => {
-  res.status(200).json({ message: 'Settlements module list endpoint foundation' });
-});
+export * from './settlements.routes.js';
+export * from './settlements.service.js';
+export * from './settlements.state-machine.js';
+export * from './settlements.types.js';
+export * from './settlements.schemas.js';
