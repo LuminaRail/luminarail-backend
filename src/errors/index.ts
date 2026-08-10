@@ -50,3 +50,45 @@ export class ConflictError extends AppError {
     super(message, 409, 'CONFLICT');
   }
 }
+
+export class StellarError extends AppError {
+  constructor(message = 'Stellar integration error', statusCode = 500, errorCode = 'STELLAR_ERROR', details?: unknown) {
+    super(message, statusCode, errorCode, details);
+  }
+}
+
+export class StellarAccountNotFoundError extends StellarError {
+  constructor(address: string) {
+    super(`Stellar account not found: ${address}`, 404, 'STELLAR_ACCOUNT_NOT_FOUND');
+  }
+}
+
+export class StellarTransactionNotFoundError extends StellarError {
+  constructor(hash: string) {
+    super(`Stellar transaction not found: ${hash}`, 404, 'STELLAR_TRANSACTION_NOT_FOUND');
+  }
+}
+
+export class StellarNetworkError extends StellarError {
+  constructor(message = 'Failed to communicate with Stellar network', details?: unknown) {
+    super(message, 502, 'STELLAR_NETWORK_ERROR', details);
+  }
+}
+
+export class StellarInvalidAddressError extends StellarError {
+  constructor(message = 'Invalid Stellar public address') {
+    super(message, 400, 'STELLAR_INVALID_ADDRESS');
+  }
+}
+
+export class StellarInvalidAssetError extends StellarError {
+  constructor(message = 'Invalid Stellar asset identifier') {
+    super(message, 400, 'STELLAR_INVALID_ASSET');
+  }
+}
+
+export class StellarRpcError extends StellarError {
+  constructor(message = 'Stellar RPC operation failed', details?: unknown) {
+    super(message, 502, 'STELLAR_RPC_ERROR', details);
+  }
+}

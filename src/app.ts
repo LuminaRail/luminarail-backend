@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { config } from './config/index.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { stellarConfig, getSorobanClient } from './stellar/index.js';
 
 import { authRouter } from './modules/auth/index.js';
 import { usersRouter } from './modules/users/index.js';
@@ -16,6 +17,7 @@ import { settlementsRouter } from './modules/settlements/index.js';
 import { merchantsRouter } from './modules/merchants/index.js';
 import { webhooksRouter } from './modules/webhooks/index.js';
 import { auditRouter } from './modules/audit/index.js';
+import { stellarRouter } from './stellar/routes/index.js';
 
 export function createApp(): Express {
   const app = express();
@@ -43,13 +45,30 @@ export function createApp(): Express {
     app.use(limiter);
   }
 
-  // Health Endpoint
-  app.get('/health', (_req, res) => {
+  // Extended Health Endpoint with Stellar Connectivity Status
+  app.get('/health', async (_req, res) => {
+    let stellarStatus = 'healthy';
+    let latestLedger: number | undefined;
+
+    try {
+      if (config.env !== 'test') {
+        const soroban = getSorobanClient();
+        latestLedger = await soroban.getLatestLedger();
+      }
+    } catch {
+      stellarStatus = 'unreachable';
+    }
+
     res.status(200).json({
       status: 'ok',
       service: 'luminarail-backend',
       environment: config.env,
       timestamp: new Date().toISOString(),
+      stellar: {
+        network: stellarConfig.network,
+        status: stellarStatus,
+        ...(latestLedger !== undefined ? { latestLedger } : {}),
+      },
     });
   });
 
@@ -66,6 +85,7 @@ export function createApp(): Express {
   api.use('/merchants', merchantsRouter);
   api.use('/webhooks', webhooksRouter);
   api.use('/audit', auditRouter);
+  api.use('/stellar', stellarRouter);
 
   app.use(config.apiPrefix, api);
 
