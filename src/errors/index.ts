@@ -51,6 +51,36 @@ export class ConflictError extends AppError {
   }
 }
 
+export class PaymentError extends AppError {
+  constructor(message = 'Payment error', statusCode = 400, errorCode = 'PAYMENT_ERROR', details?: unknown) {
+    super(message, statusCode, errorCode, details);
+  }
+}
+
+export class PaymentNotFoundError extends PaymentError {
+  constructor(paymentId: string) {
+    super(`Payment not found: ${paymentId}`, 404, 'PAYMENT_NOT_FOUND');
+  }
+}
+
+export class InvalidPaymentStateError extends PaymentError {
+  constructor(message = 'Invalid payment state transition') {
+    super(message, 400, 'INVALID_PAYMENT_STATE');
+  }
+}
+
+export class DuplicatePaymentError extends PaymentError {
+  constructor(message = 'Duplicate payment request detected') {
+    super(message, 409, 'DUPLICATE_PAYMENT');
+  }
+}
+
+export class WebhookVerificationError extends PaymentError {
+  constructor(message = 'Webhook signature verification failed') {
+    super(message, 400, 'WEBHOOK_VERIFICATION_FAILED');
+  }
+}
+
 export class StellarError extends AppError {
   constructor(message = 'Stellar integration error', statusCode = 500, errorCode = 'STELLAR_ERROR', details?: unknown) {
     super(message, statusCode, errorCode, details);

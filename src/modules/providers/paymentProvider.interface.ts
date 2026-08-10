@@ -1,38 +1,64 @@
-export interface PaymentRequest {
+import { PaymentStatus, PaymentType } from '@prisma/client';
+
+export interface CreatePaymentRequest {
   orderId: string;
-  amount: number;
+  userId: string;
+  amount: string;
   currency: string;
-  customerEmail: string;
+  type: PaymentType;
   reference: string;
+  metadata?: Record<string, unknown>;
 }
 
-export interface PaymentResponse {
-  providerReference: string;
-  status: 'pending' | 'successful' | 'failed';
+export interface NormalizedPaymentResponse {
+  provider: string;
+  providerPaymentId: string;
+  status: PaymentStatus;
+  amount: string;
+  currency: string;
   redirectUrl?: string;
+  metadata?: Record<string, unknown>;
   rawResponse?: Record<string, unknown>;
 }
 
-export interface PayoutRequest {
+export interface CreatePayoutRequest {
   payoutId: string;
-  amount: number;
+  userId: string;
+  amount: string;
   currency: string;
   destinationAccount: string;
   destinationBankCode?: string;
   reference: string;
+  metadata?: Record<string, unknown>;
 }
 
-export interface PayoutResponse {
-  providerReference: string;
-  status: 'pending' | 'successful' | 'failed';
+export interface NormalizedPayoutResponse {
+  provider: string;
+  providerPayoutId: string;
+  status: PaymentStatus;
+  amount: string;
+  currency: string;
+  metadata?: Record<string, unknown>;
   rawResponse?: Record<string, unknown>;
+}
+
+export interface WebhookEventPayload {
+  eventId: string;
+  eventType: string;
+  providerPaymentId: string;
+  status: PaymentStatus;
+  payload: Record<string, unknown>;
 }
 
 export interface IPaymentProvider {
   readonly providerId: string;
   readonly supportedCurrencies: string[];
 
-  initiatePayment(request: PaymentRequest): Promise<PaymentResponse>;
-  verifyPayment(reference: string): Promise<PaymentResponse>;
-  initiatePayout(request: PayoutRequest): Promise<PayoutResponse>;
+  createPayment(request: CreatePaymentRequest): Promise<NormalizedPaymentResponse>;
+  getPaymentStatus(providerPaymentId: string): Promise<NormalizedPaymentResponse>;
+  verifyPayment(providerPaymentId: string, params?: Record<string, unknown>): Promise<NormalizedPaymentResponse>;
+  createPayout(request: CreatePayoutRequest): Promise<NormalizedPayoutResponse>;
+  getPayoutStatus(providerPayoutId: string): Promise<NormalizedPayoutResponse>;
+  verifyWebhookSignature(headers: Record<string, string | string[] | undefined>, rawBody: string | Buffer): boolean;
+  parseWebhookEvent(headers: Record<string, string | string[] | undefined>, body: any): WebhookEventPayload;
 }
