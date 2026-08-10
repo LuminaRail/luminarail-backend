@@ -1,6 +1,7 @@
 import express, { Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { config } from './config/index.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -9,6 +10,7 @@ import { usersRouter } from './modules/users/index.js';
 import { walletsRouter } from './modules/wallets/index.js';
 import { quotesRouter } from './modules/quotes/index.js';
 import { ordersRouter } from './modules/orders/index.js';
+import { transactionsRouter } from './modules/transactions/index.js';
 import { paymentsRouter } from './modules/payments/index.js';
 import { settlementsRouter } from './modules/settlements/index.js';
 import { merchantsRouter } from './modules/merchants/index.js';
@@ -22,16 +24,43 @@ export function createApp(): Express {
   app.use(cors());
   app.use(express.json());
 
-  app.get('/health', (_req, res) => {
-    res.status(200).json({ status: 'ok', service: 'luminarail-backend', timestamp: new Date().toISOString() });
+  // Rate Limiting
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per window
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      success: false,
+      error: {
+        code: 'TOO_MANY_REQUESTS',
+        message: 'Too many requests, please try again later.',
+      },
+    },
   });
 
+  if (config.env !== 'test') {
+    app.use(limiter);
+  }
+
+  // Health Endpoint
+  app.get('/health', (_req, res) => {
+    res.status(200).json({
+      status: 'ok',
+      service: 'luminarail-backend',
+      environment: config.env,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // API V1 Routes
   const api = express.Router();
   api.use('/auth', authRouter);
   api.use('/users', usersRouter);
   api.use('/wallets', walletsRouter);
   api.use('/quotes', quotesRouter);
   api.use('/orders', ordersRouter);
+  api.use('/transactions', transactionsRouter);
   api.use('/payments', paymentsRouter);
   api.use('/settlements', settlementsRouter);
   api.use('/merchants', merchantsRouter);
@@ -40,6 +69,7 @@ export function createApp(): Express {
 
   app.use(config.apiPrefix, api);
 
+  // Centralized Error Handling Middleware
   app.use(errorHandler);
 
   return app;
