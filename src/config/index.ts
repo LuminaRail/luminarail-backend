@@ -1,18 +1,24 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { StrKey } from '@stellar/stellar-sdk';
 
 dotenv.config();
 
-const envSchema = z.object({
+export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.string().transform((val) => parseInt(val, 10)).default('4000'),
   API_PREFIX: z.string().default('/api/v1'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL environment variable is required'),
   REDIS_URL: z.string().optional().default('redis://localhost:6379'),
-  STELLAR_NETWORK: z.string().default('testnet'),
+  STELLAR_NETWORK: z.enum(['testnet', 'futurenet', 'public', 'mainnet']).default('testnet'),
   STELLAR_RPC_URL: z.string().url('STELLAR_RPC_URL must be a valid URL').default('https://soroban-testnet.stellar.org'),
   STELLAR_HORIZON_URL: z.string().url('STELLAR_HORIZON_URL must be a valid URL').default('https://horizon-testnet.stellar.org'),
-  STELLAR_USDC_ISSUER: z.string().optional().default(''),
+  STELLAR_USDC_ISSUER: z
+    .string()
+    .min(1, 'STELLAR_USDC_ISSUER environment variable is required')
+    .refine((val) => StrKey.isValidEd25519PublicKey(val), {
+      message: 'STELLAR_USDC_ISSUER must be a valid Stellar public key address',
+    }),
   STELLAR_SETTLEMENT_VAULT_CONTRACT_ID: z.string().optional().default(''),
   JWT_SECRET: z.string().default('dev_secret_change_me_in_production'),
   JWT_EXPIRES_IN: z.string().default('1d'),

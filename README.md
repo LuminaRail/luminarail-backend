@@ -16,7 +16,7 @@ src/
 ├── server.ts         # Application entry point
 ├── config/           # Centralized configuration & Zod startup environment validation
 ├── db/               # PrismaClient database connection singleton
-├── errors/           # Standardized error definitions (AppError, ValidationError, etc.)
+├── errors/           # Standardized error definitions (AppError, ValidationError, StellarError, etc.)
 ├── middleware/       # JWT Authentication, RBAC, Validation, Error Handling
 ├── modules/          # Clean domain module boundaries
 │   ├── auth/         # JWT Register, Login, Logout
@@ -26,16 +26,26 @@ src/
 │   ├── orders/       # Order creation, state machine & Idempotency-Key handling
 │   ├── transactions/ # Application-level transaction tracking
 │   └── audit/        # Sensitive-redacted audit log recording & admin lookup
-└── stellar/          # Stellar Horizon & Soroban client integration
+└── stellar/          # Stellar Integration Layer (Stellar Gateway)
+    ├── config/       # Stellar network config & testnet safety assertions
+    ├── horizon/      # Dedicated Horizon RPC client
+    ├── soroban/      # Dedicated Soroban RPC client
+    ├── accounts/     # Non-custodial account service & address validation
+    ├── assets/       # Asset service, allowlisting & normalization
+    ├── balances/     # Balance normalization with string precision
+    ├── transactions/ # Transaction lookup & normalization
+    ├── cache/        # Pluggable cache abstraction (memory / Redis)
+    └── routes/       # Read-only Stellar API endpoints (/api/v1/stellar/*)
 ```
 
 ### Architectural Safeguards
 
-1. **Provider Isolation**: Payment providers implement abstract interfaces. Mock engines are explicitly isolated for Phase 1.
-2. **Off-Chain Data Rules**: Sensitive user information, PII, and bank account metadata are kept strictly off-chain in PostgreSQL.
-3. **Idempotency**: Financial operations (`POST /api/v1/orders`) support server-side `Idempotency-Key` headers backed by PostgreSQL deduplication.
-4. **Key Safety**: The backend never accepts, requests, or stores private keys or seed phrases.
-5. **Server-Side Financial Rules**: Exchange rates, amounts, fees, and quotes are strictly generated server-side. Client-supplied amounts are never trusted.
+1. **Stellar Gateway Boundary**: Application modules communicate with Stellar exclusively via the `src/stellar` service layer. Direct Horizon / Soroban calls from modules are prohibited.
+2. **Testnet Safety**: Default network is locked to `testnet`. Explicit network safety assertions (`assertTestnetSafety()`) prevent mainnet operations during Phase 2 development mode.
+3. **Non-Custodial Model**: Private keys, secret seeds (`S...`), and seed phrases are strictly forbidden across all HTTP boundaries and internal services.
+4. **Monetary Precision**: All financial amounts use string/decimal representations to eliminate JavaScript floating-point rounding errors.
+5. **Idempotency & Off-Chain Rules**: Financial operations (`POST /api/v1/orders`) support server-side `Idempotency-Key` headers backed by PostgreSQL deduplication.
+6. **Server-Side Financial Rules**: Exchange rates, amounts, fees, and quotes are strictly generated server-side. Client-supplied amounts are never trusted.
 
 ---
 
@@ -104,7 +114,7 @@ npx prisma migrate status
 
 | Module | Method | Endpoint | Description | Auth Required |
 |---|---|---|---|---|
-| **Health** | `GET` | `/health` | Service health status | No |
+| **Health** | `GET` | `/health` | Service & Stellar Testnet health status | No |
 | **Auth** | `POST` | `/api/v1/auth/register` | User registration | No |
 | **Auth** | `POST` | `/api/v1/auth/login` | Authenticate user & return JWT | No |
 | **Auth** | `POST` | `/api/v1/auth/logout` | End user session | No |
@@ -120,6 +130,9 @@ npx prisma migrate status
 | **Transactions** | `GET` | `/api/v1/transactions` | Query user transactions | Yes |
 | **Transactions** | `GET` | `/api/v1/transactions/:id` | Get transaction details | Yes |
 | **Audit** | `GET` | `/api/v1/audit` | Query audit logs | Admin / SuperAdmin |
+| **Stellar** | `GET` | `/api/v1/stellar/accounts/:address` | Normalized Stellar account lookup | No |
+| **Stellar** | `GET` | `/api/v1/stellar/accounts/:address/balances` | Normalized Stellar account balances | No |
+| **Stellar** | `GET` | `/api/v1/stellar/transactions/:hash` | Normalized Stellar transaction lookup | No |
 
 ---
 
@@ -128,6 +141,7 @@ npx prisma migrate status
 - **Password Hashing**: Passwords are hashed using `bcrypt` with cost factor 10. Plaintext passwords are never logged or stored.
 - **JWT Authentication**: Secured using `Authorization: Bearer <token>`.
 - **Role-Based Access Control (RBAC)**: Support for `USER`, `MERCHANT`, `ADMIN`, `SUPER_ADMIN`.
+- **Non-Custodial Security**: Secret keys (`S...`), seed phrases, and private keys are strictly rejected across all endpoints and services.
 - **Security Headers & Rate Limiting**: Enforced via `helmet` and `express-rate-limit`.
 - **Sensitive Data Redaction**: Audit logs automatically redact sensitive fields (`password`, `token`, `secret`, `privateKey`, etc.).
 
