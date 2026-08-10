@@ -6,3 +6,4 @@ export * from './assets/asset.service.js';
 export * from './balances/balance.service.js';
 export * from './transactions/transaction.service.js';
 export * from './cache/cache.service.js';
+export * from './settlement.executor.js';

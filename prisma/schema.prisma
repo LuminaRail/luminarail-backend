@@ -68,10 +68,13 @@ enum PaymentStatus {
 }
 
 enum SettlementStatus {
-  QUEUED
-  IN_PROGRESS
+  PENDING
+  SUBMITTING
+  SUBMITTED
+  CONFIRMING
   COMPLETED
   FAILED
+  REQUIRES_RECONCILIATION
 }
 
 enum TransactionType {
@@ -102,6 +105,7 @@ model User {
   payments      Payment[]
   transactions  Transaction[]
   merchants     Merchant[]
+  settlements   Settlement[]
   auditLogs     AuditLog[]
   notifications Notification[]
 
@@ -249,16 +253,31 @@ model Payout {
 }
 
 model Settlement {
-  id            String           @id @default(uuid())
-  orderId       String           @map("order_id")
-  stellarTxHash String?          @map("stellar_tx_hash")
-  status        SettlementStatus @default(QUEUED)
-  amount        Decimal          @db.Decimal(18, 4)
-  assetCode     String           @map("asset_code")
-  createdAt     DateTime         @default(now()) @map("created_at")
-  updatedAt     DateTime         @updatedAt @map("updated_at")
-  order         Order            @relation(fields: [orderId], references: [id])
+  id                     String           @id @default(uuid())
+  settlementId           String           @unique @map("settlement_id")
+  orderId                String           @unique @map("order_id")
+  userId                 String           @map("user_id")
+  status                 SettlementStatus @default(PENDING)
+  asset                  String           @map("asset")
+  amount                 Decimal          @db.Decimal(18, 4)
+  source                 String?          @map("source")
+  destination            String?          @map("destination")
+  contractAddress        String?          @map("contract_address")
+  stellarTransactionHash String?          @map("stellar_transaction_hash")
+  stellarLedger          Int?             @map("stellar_ledger")
+  attemptCount           Int              @default(0) @map("attempt_count")
+  lastError              String?          @map("last_error")
+  submittedAt            DateTime?        @map("submitted_at")
+  confirmedAt            DateTime?        @map("confirmed_at")
+  createdAt              DateTime         @default(now()) @map("created_at")
+  updatedAt              DateTime         @updatedAt @map("updated_at")
 
+  order                  Order            @relation(fields: [orderId], references: [id])
+  user                   User             @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
   @@map("settlements")
 }
 

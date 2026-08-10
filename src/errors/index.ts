@@ -81,6 +81,36 @@ export class WebhookVerificationError extends PaymentError {
   }
 }
 
+export class SettlementError extends AppError {
+  constructor(message = 'Settlement error', statusCode = 400, errorCode = 'SETTLEMENT_ERROR', details?: unknown) {
+    super(message, statusCode, errorCode, details);
+  }
+}
+
+export class SettlementNotFoundError extends SettlementError {
+  constructor(identifier: string) {
+    super(`Settlement not found: ${identifier}`, 404, 'SETTLEMENT_NOT_FOUND');
+  }
+}
+
+export class InvalidSettlementStateError extends SettlementError {
+  constructor(message = 'Invalid settlement state transition') {
+    super(message, 400, 'INVALID_SETTLEMENT_STATE');
+  }
+}
+
+export class DuplicateSettlementError extends SettlementError {
+  constructor(message = 'Duplicate settlement detected for order') {
+    super(message, 409, 'DUPLICATE_SETTLEMENT');
+  }
+}
+
+export class InvalidOrderStateForSettlementError extends SettlementError {
+  constructor(status: string) {
+    super(`Order status '${status}' is invalid for settlement creation. Must be SETTLEMENT_PENDING.`, 400, 'INVALID_ORDER_STATE_FOR_SETTLEMENT');
+  }
+}
+
 export class StellarError extends AppError {
   constructor(message = 'Stellar integration error', statusCode = 500, errorCode = 'STELLAR_ERROR', details?: unknown) {
     super(message, statusCode, errorCode, details);

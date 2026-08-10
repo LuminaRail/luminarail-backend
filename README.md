@@ -140,9 +140,89 @@ npx prisma migrate status
 | **Transactions** | `GET` | `/api/v1/transactions` | Query user transactions | Yes |
 | **Transactions** | `GET` | `/api/v1/transactions/:id` | Get transaction details | Yes |
 | **Audit** | `GET` | `/api/v1/audit` | Query audit logs | Admin / SuperAdmin |
+| **Settlements** | `GET` | `/api/v1/settlements` | List pending settlements | Admin / SuperAdmin |
+| **Settlements** | `GET` | `/api/v1/settlements/:id` | Get settlement details | Yes |
+| **Settlements** | `GET` | `/api/v1/settlements/order/:orderId` | Get settlement by order ID | Yes |
 | **Stellar** | `GET` | `/api/v1/stellar/accounts/:address` | Normalized Stellar account lookup | No |
 | **Stellar** | `GET` | `/api/v1/stellar/accounts/:address/balances` | Normalized Stellar account balances | No |
 | **Stellar** | `GET` | `/api/v1/stellar/transactions/:hash` | Normalized Stellar transaction lookup | No |
+
+---
+
+## Phase 5A — Settlement Engine Foundation
+
+### Overview & Security Constraints
+> **Note on Phase 5A**: Live Soroban transaction submission, transaction signing, and secret key custody are **NOT implemented** in Phase 5A. The settlement engine creates durable database records, enforces state transitions, and halts cleanly before live on-chain submission.
+
+- **Network Scope**: Stellar Testnet ONLY.
+- **Non-Custodial Enforcement**: Secret keys, seed phrases (`S...`), and private key signing remain strictly forbidden.
+- **On-Chain Submission Status**: Live Soroban transaction submission is disabled in Phase 5A.
+- **Monetary Safety**: Settlement amounts are derived server-side from `Order` / `Quote` records. Untrusted user inputs for amounts are strictly rejected.
+
+### Database Model (`Settlement`)
+
+```prisma
+model Settlement {
+  id                     String           @id @default(uuid())
+  settlementId           String           @unique @map("settlement_id")
+  orderId                String           @unique @map("order_id")
+  userId                 String           @map("user_id")
+  status                 SettlementStatus @default(PENDING)
+  asset                  String           @map("asset")
+  amount                 Decimal          @db.Decimal(18, 4)
+  source                 String?          @map("source")
+  destination            String?          @map("destination")
+  contractAddress        String?          @map("contract_address")
+  stellarTransactionHash String?          @map("stellar_transaction_hash")
+  stellarLedger          Int?             @map("stellar_ledger")
+  attemptCount           Int              @default(0) @map("attempt_count")
+  lastError              String?          @map("last_error")
+  submittedAt            DateTime?        @map("submitted_at")
+  confirmedAt            DateTime?        @map("confirmed_at")
+  createdAt              DateTime         @default(now()) @map("created_at")
+  updatedAt              DateTime         @updatedAt @map("updated_at")
+}
+```
+
+### Settlement State Machine
+
+```
+PENDING
+  ├──> SUBMITTING
+  └──> FAILED
+
+SUBMITTING
+  ├──> SUBMITTED
+  ├──> FAILED
+  └──> REQUIRES_RECONCILIATION
+
+SUBMITTED
+  ├──> CONFIRMING
+  └──> REQUIRES_RECONCILIATION
+
+CONFIRMING
+  ├──> COMPLETED
+  └──> REQUIRES_RECONCILIATION
+
+COMPLETED (terminal)
+FAILED (terminal)
+REQUIRES_RECONCILIATION (terminal for current phase)
+```
+
+### Settlement Lifecycle & Worker Responsibilities
+
+1. **Order State Check**: Settlement creation only accepts orders in `OrderStatus.SETTLEMENT_PENDING`. Any other state is rejected (`InvalidOrderStateForSettlementError`).
+2. **Idempotent Claiming**: Concurrent creation requests for the same order are guarded by PostgreSQL unique index on `order_id` and Prisma `P2002` error handling.
+3. **Worker Processing (`src/workers/settlement.worker.ts`)**:
+   - Queries `SETTLEMENT_PENDING` orders.
+   - Atomically claims the order and creates a `Settlement` record in `PENDING` status.
+   - Transitions settlement to `SUBMITTING`.
+   - Halts prior to live Stellar network submission.
+4. **Stellar Integration Boundary (`SettlementExecutor`)**:
+   - Abstracts Stellar operations via `SettlementExecutor` interface (`submitSettlement`, `getSettlementStatus`, `confirmSettlement`).
+   - Uses `MockSettlementExecutor` for test environment boundaries.
+
+---
 
 ---
 
