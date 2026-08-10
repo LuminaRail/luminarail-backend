@@ -16,7 +16,7 @@ src/
 ├── server.ts         # Application entry point
 ├── config/           # Centralized configuration & Zod startup environment validation
 ├── db/               # PrismaClient database connection singleton
-├── errors/           # Standardized error definitions (AppError, ValidationError, StellarError, etc.)
+├── errors/           # Standardized error definitions (AppError, PaymentError, StellarError, etc.)
 ├── middleware/       # JWT Authentication, RBAC, Validation, Error Handling
 ├── modules/          # Clean domain module boundaries
 │   ├── auth/         # JWT Register, Login, Logout
@@ -24,6 +24,9 @@ src/
 │   ├── wallets/      # Non-custodial Stellar wallet management & address validation
 │   ├── quotes/       # FX exchange rates & deterministic mock quote engine
 │   ├── orders/       # Order creation, state machine & Idempotency-Key handling
+│   ├── payments/     # Payment creation, retrieval, verification & state machine
+│   ├── providers/    # Vendor-agnostic IPaymentProvider & MockPaymentProvider
+│   ├── webhooks/     # Webhook signature verification, idempotency & event processing
 │   ├── transactions/ # Application-level transaction tracking
 │   └── audit/        # Sensitive-redacted audit log recording & admin lookup
 └── stellar/          # Stellar Integration Layer (Stellar Gateway)
@@ -40,12 +43,12 @@ src/
 
 ### Architectural Safeguards
 
-1. **Stellar Gateway Boundary**: Application modules communicate with Stellar exclusively via the `src/stellar` service layer. Direct Horizon / Soroban calls from modules are prohibited.
-2. **Testnet Safety**: Default network is locked to `testnet`. Explicit network safety assertions (`assertTestnetSafety()`) prevent mainnet operations during Phase 2 development mode.
-3. **Non-Custodial Model**: Private keys, secret seeds (`S...`), and seed phrases are strictly forbidden across all HTTP boundaries and internal services.
-4. **Monetary Precision**: All financial amounts use string/decimal representations to eliminate JavaScript floating-point rounding errors.
-5. **Idempotency & Off-Chain Rules**: Financial operations (`POST /api/v1/orders`) support server-side `Idempotency-Key` headers backed by PostgreSQL deduplication.
-6. **Server-Side Financial Rules**: Exchange rates, amounts, fees, and quotes are strictly generated server-side. Client-supplied amounts are never trusted.
+1. **Payment Provider Abstraction**: Core domains depend strictly on the vendor-agnostic `IPaymentProvider` abstraction. Vendor-specific response formats are never leaked.
+2. **Deterministic Sandbox Provider**: Phase 3 operates exclusively on `MockPaymentProvider` (no real payment API credentials, real NGN processing, or live settlement).
+3. **Stellar Gateway Boundary**: Application modules communicate with Stellar exclusively via `src/stellar/` services.
+4. **Idempotency**: Financial requests (`POST /api/v1/orders`, `POST /api/v1/payments`, `POST /api/v1/webhooks/:provider`) support server-side `Idempotency-Key` and `WebhookEvent` database deduplication.
+5. **Non-Custodial Model**: Private keys, secret seeds (`S...`), card numbers, CVVs, and provider secrets are strictly forbidden across all HTTP boundaries.
+6. **Monetary Precision**: All financial amounts use string/decimal representations to eliminate JavaScript floating-point rounding errors.
 
 ---
 
@@ -104,6 +107,9 @@ npx prisma generate
 # Create and apply new migrations locally
 npx prisma migrate dev --name <migration_name>
 
+# Deploy migrations in non-interactive CI/CD
+npx prisma migrate deploy
+
 # Check migration status
 npx prisma migrate status
 ```
@@ -127,6 +133,10 @@ npx prisma migrate status
 | **Orders** | `POST` | `/api/v1/orders` | Create order (with `Idempotency-Key`) | Yes |
 | **Orders** | `GET` | `/api/v1/orders` | List user orders | Yes |
 | **Orders** | `GET` | `/api/v1/orders/:id` | Get order details | Yes |
+| **Payments** | `POST` | `/api/v1/payments` | Create payment (with `Idempotency-Key`) | Yes |
+| **Payments** | `GET` | `/api/v1/payments/:id` | Get payment details | Yes |
+| **Payments** | `POST` | `/api/v1/payments/:id/verify` | Verify payment status with provider | Yes |
+| **Webhooks** | `POST` | `/api/v1/webhooks/:provider` | Provider webhook endpoint (Signature & Idempotency) | Signature Header |
 | **Transactions** | `GET` | `/api/v1/transactions` | Query user transactions | Yes |
 | **Transactions** | `GET` | `/api/v1/transactions/:id` | Get transaction details | Yes |
 | **Audit** | `GET` | `/api/v1/audit` | Query audit logs | Admin / SuperAdmin |
@@ -141,7 +151,7 @@ npx prisma migrate status
 - **Password Hashing**: Passwords are hashed using `bcrypt` with cost factor 10. Plaintext passwords are never logged or stored.
 - **JWT Authentication**: Secured using `Authorization: Bearer <token>`.
 - **Role-Based Access Control (RBAC)**: Support for `USER`, `MERCHANT`, `ADMIN`, `SUPER_ADMIN`.
-- **Non-Custodial Security**: Secret keys (`S...`), seed phrases, and private keys are strictly rejected across all endpoints and services.
+- **Non-Custodial Security**: Secret keys (`S...`), seed phrases, card details, CVVs, and provider secrets are strictly rejected across all endpoints.
 - **Security Headers & Rate Limiting**: Enforced via `helmet` and `express-rate-limit`.
 - **Sensitive Data Redaction**: Audit logs automatically redact sensitive fields (`password`, `token`, `secret`, `privateKey`, etc.).
 
