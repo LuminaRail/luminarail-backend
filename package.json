@@ -1,0 +1,48 @@
+{
+  "name": "luminarail-backend",
+  "version": "0.1.0",
+  "description": "LuminaRail Backend — Modular Settlement Infrastructure API for Stellar and local payment rails.",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "lint": "eslint src/**/*.ts",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev"
+  },
+  "keywords": [
+    "stellar",
+    "settlement",
+    "payments",
+    "fiat-onramp",
+    "fiat-offramp",
+    "soroban",
+    "fintech"
+  ],
+  "author": "LuminaRail Contributors",
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/client": "^6.3.1",
+    "@stellar/stellar-sdk": "^13.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.4",
+    "@typescript-eslint/eslint-plugin": "^8.24.0",
+    "@typescript-eslint/parser": "^8.24.0",
+    "eslint": "^9.20.1",
+    "prisma": "^6.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
