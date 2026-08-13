@@ -2,6 +2,7 @@ import { OrderStatus, Settlement, SettlementStatus } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { SettlementService } from '../modules/settlements/settlements.service.js';
 import { SettlementExecutor, MockSettlementExecutor } from '../stellar/settlement.executor.js';
+import { LiveSettlementExecutor } from '../stellar/live-settlement.executor.js';
 
 export interface ProcessPendingSettlementsOptions {
   batchSize?: number;
@@ -19,7 +20,7 @@ export class SettlementWorker {
   private executor: SettlementExecutor;
 
   constructor(executor?: SettlementExecutor) {
-    this.executor = executor || new MockSettlementExecutor();
+    this.executor = executor || new LiveSettlementExecutor();
   }
 
   /**

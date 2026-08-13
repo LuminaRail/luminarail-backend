@@ -107,16 +107,27 @@ export class SorobanTransactionService {
     // 5. Parse contract parameters
     const settlementIdU64 = parseSettlementIdToU64(params.settlementId);
     const amountStroops = parseAmountToStroops(params.amount);
-    const sourceAddress = params.source || signerPublicKey;
-    const destinationAddress = params.destination;
+    const sourceAddress =
+  !params.source || params.source === 'LUMINA_TREASURY'
+    ? signerPublicKey
+    : params.source;
+
+const destinationAddress = params.destination;
+
+if (!StrKey.isValidEd25519PublicKey(sourceAddress)) {
+  throw new SorobanSubmissionError(
+    `Invalid source Stellar address: ${sourceAddress}`
+  );
+}
 
     if (!destinationAddress || !StrKey.isValidEd25519PublicKey(destinationAddress)) {
       throw new SorobanSubmissionError(`Invalid destination Stellar address: ${destinationAddress}`);
     }
 
-    const assetAddress = StrKey.isValidContract(params.asset) || StrKey.isValidEd25519PublicKey(params.asset)
-      ? params.asset
-      : config.stellar.usdcIssuer;
+    const assetAddress =
+  params.asset && StrKey.isValidContract(params.asset)
+    ? params.asset
+    : stellarConfig.usdcContractId;
 
     const contract = new Contract(contractId);
 

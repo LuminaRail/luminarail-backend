@@ -13,12 +13,19 @@ export const envSchema = z.object({
   STELLAR_NETWORK: z.enum(['testnet', 'futurenet', 'public', 'mainnet']).default('testnet'),
   STELLAR_RPC_URL: z.string().url('STELLAR_RPC_URL must be a valid URL').default('https://soroban-testnet.stellar.org'),
   STELLAR_HORIZON_URL: z.string().url('STELLAR_HORIZON_URL must be a valid URL').default('https://horizon-testnet.stellar.org'),
-  STELLAR_USDC_ISSUER: z
+    STELLAR_USDC_ISSUER: z
     .string()
     .min(1, 'STELLAR_USDC_ISSUER environment variable is required')
     .refine((val) => StrKey.isValidEd25519PublicKey(val), {
       message: 'STELLAR_USDC_ISSUER must be a valid Stellar public key address',
     }),
+
+  STELLAR_USDC_CONTRACT_ID: z
+  .string()
+  .optional()
+  .refine((val) => !val || StrKey.isValidContract(val), {
+    message: 'STELLAR_USDC_CONTRACT_ID must be a valid Stellar contract address',
+  }),
   STELLAR_SETTLEMENT_VAULT_CONTRACT_ID: z.string().optional().default(''),
   SOROBAN_SETTLEMENT_VAULT_CONTRACT_ID: z.string().optional().default(''),
   SOROBAN_ESCROW_CONTRACT_ID: z.string().optional().default(''),
@@ -62,6 +69,7 @@ export const config = {
     rpcUrl: envData.STELLAR_RPC_URL,
     horizonUrl: envData.STELLAR_HORIZON_URL,
     usdcIssuer: envData.STELLAR_USDC_ISSUER,
+    usdcContractId: envData.STELLAR_USDC_CONTRACT_ID,
     settlementVaultContractId: envData.SOROBAN_SETTLEMENT_VAULT_CONTRACT_ID || envData.STELLAR_SETTLEMENT_VAULT_CONTRACT_ID,
     escrowContractId: envData.SOROBAN_ESCROW_CONTRACT_ID,
     feeManagerContractId: envData.SOROBAN_FEE_MANAGER_CONTRACT_ID,

@@ -9,6 +9,7 @@ import {
 } from '../../errors/index.js';
 import { SettlementStateMachine } from './settlements.state-machine.js';
 import { AuditService } from '../audit/audit.service.js';
+import { config } from '../../config/index.js';
 
 export class SettlementService {
   public static async createSettlementForOrder(
@@ -56,7 +57,7 @@ export class SettlementService {
           status: SettlementStatus.PENDING,
           asset,
           amount,
-          source: 'LUMINA_TREASURY',
+          source: config.stellar.signerPublicKey,
           destination,
           attemptCount: 0,
         },
