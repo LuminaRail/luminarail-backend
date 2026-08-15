@@ -44,11 +44,22 @@ export const envSchema = z.object({
     }),
   JWT_SECRET: z.string().default('dev_secret_change_me_in_production'),
   JWT_EXPIRES_IN: z.string().default('1d'),
+  NGN_PROVIDER: z.enum(['sandbox', 'paystack']).default('sandbox'),
+  PAYSTACK_SECRET_KEY: z.string().optional().default(''),
+  PAYSTACK_BASE_URL: z.string().url('PAYSTACK_BASE_URL must be a valid URL').default('https://api.paystack.co'),
   FX_API_URL: z.string().url('FX_API_URL must be a valid URL').default('https://open.er-api.com/v6/latest/USD'),
   FX_API_KEY: z.string().optional().default(''),
   QUOTE_PROVIDER: z.enum(['real', 'mock']).default('real'),
   QUOTE_EXPIRY_SECONDS: z.string().transform((val) => parseInt(val, 10)).default('30'),
   QUOTE_FEE_PERCENTAGE: z.string().transform((val) => parseFloat(val)).default('0.01'),
+}).refine((data) => {
+  if (data.NGN_PROVIDER === 'paystack' && (!data.PAYSTACK_SECRET_KEY || data.PAYSTACK_SECRET_KEY.trim() === '')) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'PAYSTACK_SECRET_KEY environment variable is required when NGN_PROVIDER is set to "paystack".',
+  path: ['PAYSTACK_SECRET_KEY'],
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -91,5 +102,10 @@ export const config = {
     fxApiKey: envData.FX_API_KEY,
     expirySeconds: envData.QUOTE_EXPIRY_SECONDS,
     feePercentage: envData.QUOTE_FEE_PERCENTAGE,
+  },
+  ngnProvider: envData.NGN_PROVIDER,
+  paystack: {
+    secretKey: envData.PAYSTACK_SECRET_KEY,
+    baseUrl: envData.PAYSTACK_BASE_URL,
   },
 };

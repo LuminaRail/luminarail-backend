@@ -117,11 +117,14 @@ export class WebhookService {
               data: { status: parsedEvent.status },
             });
 
-            // Order State Machine Update: Stop at SETTLEMENT_PENDING
+            // Order State Machine Update: Enter SETTLEMENT_PENDING only if walletAddress exists
             if (parsedEvent.status === PaymentStatus.SUCCEEDED) {
+              const targetOrder = await tx.order.findUnique({ where: { id: payment.orderId } });
+              const hasValidWallet = !!targetOrder?.walletAddress && targetOrder.walletAddress.trim() !== '';
+
               await tx.order.update({
                 where: { id: payment.orderId },
-                data: { status: OrderStatus.SETTLEMENT_PENDING },
+                data: { status: hasValidWallet ? OrderStatus.SETTLEMENT_PENDING : OrderStatus.PAYMENT_CONFIRMED },
               });
             } else if (parsedEvent.status === PaymentStatus.FAILED) {
               await tx.order.update({

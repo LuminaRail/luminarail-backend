@@ -81,6 +81,12 @@ export class WebhookVerificationError extends PaymentError {
   }
 }
 
+export class ProviderError extends PaymentError {
+  constructor(message = 'Payment provider error', statusCode = 502, errorCode = 'PROVIDER_ERROR', details?: unknown) {
+    super(message, statusCode, errorCode, details);
+  }
+}
+
 export class SettlementError extends AppError {
   constructor(message = 'Settlement error', statusCode = 400, errorCode = 'SETTLEMENT_ERROR', details?: unknown) {
     super(message, statusCode, errorCode, details);

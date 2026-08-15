@@ -5,6 +5,8 @@ import { prisma } from '../../src/db/prisma.js';
 import { QuoteService } from '../../src/modules/quotes/quotes.service.js';
 import { MockQuoteProvider } from '../../src/modules/quotes/providers/mock-quote.provider.js';
 
+import { Keypair } from '@stellar/stellar-sdk';
+
 describe('Webhooks API & Signature Verification', () => {
   const app = createApp();
   const userEmail = `test_wh_${Date.now()}@example.com`;
@@ -14,9 +16,10 @@ describe('Webhooks API & Signature Verification', () => {
   let paymentId = '';
   let providerPaymentId = '';
   const eventId = `evt_wh_${Date.now()}`;
+  const validWallet = Keypair.random().publicKey();
 
   beforeAll(async () => {
-  QuoteService.setProvider(new MockQuoteProvider());
+    QuoteService.setProvider(new MockQuoteProvider());
     const r1 = await request(app).post('/api/v1/auth/register').send({
       email: userEmail,
       password: 'Password123!',
@@ -33,7 +36,11 @@ describe('Webhooks API & Signature Verification', () => {
     const oRes = await request(app)
       .post('/api/v1/orders')
       .set('Authorization', `Bearer ${userToken}`)
-      .send({ quoteId, type: 'ON_RAMP' });
+      .send({
+        quoteId,
+        type: 'ON_RAMP',
+        walletAddress: validWallet,
+      });
 
     orderId = oRes.body.data.id;
 

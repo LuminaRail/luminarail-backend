@@ -50,6 +50,15 @@ export class MockPaymentProvider implements IPaymentProvider {
       status,
       amount: request.amount,
       currency: request.currency,
+      instructions: {
+        bankName: 'LuminaRail Test Bank (Providus)',
+        accountNumber: '9982014821',
+        accountName: 'LuminaRail Sandbox Vault',
+        reference: request.reference,
+        amount: request.amount,
+        currency: request.currency,
+        instructions: 'Transfer exact amount to the virtual account number provided.',
+      },
       redirectUrl: `https://checkout.mockprovider.local/pay/${request.reference}`,
       metadata: {
         sandbox: true,

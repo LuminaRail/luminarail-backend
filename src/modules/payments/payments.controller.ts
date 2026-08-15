@@ -16,11 +16,20 @@ export class PaymentController {
     );
 
     const statusCode = isDuplicate ? 200 : 201;
+    let metadataParsed: Record<string, any> = {};
+    if (payment.metadata) {
+      try {
+        metadataParsed = JSON.parse(payment.metadata);
+      } catch {
+        // ignore parse error
+      }
+    }
 
     res.status(statusCode).json({
       success: true,
       data: {
         paymentId: payment.id,
+        id: payment.id,
         orderId: payment.orderId,
         provider: payment.provider,
         providerPaymentId: payment.providerPaymentId,
@@ -34,6 +43,8 @@ export class PaymentController {
         currency: payment.currency,
         reference: payment.reference,
         idempotencyKey: payment.idempotencyKey,
+        instructions: metadataParsed.instructions || null,
+        metadata: metadataParsed,
         createdAt: payment.createdAt,
       },
     });
@@ -45,10 +56,20 @@ export class PaymentController {
 
     const payment = await PaymentService.getPaymentById(id, req.user!.id, isAdmin);
 
+    let metadataParsed: Record<string, any> = {};
+    if (payment.metadata) {
+      try {
+        metadataParsed = JSON.parse(payment.metadata);
+      } catch {
+        // ignore parse error
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: {
         paymentId: payment.id,
+        id: payment.id,
         orderId: payment.orderId,
         provider: payment.provider,
         providerPaymentId: payment.providerPaymentId,
@@ -61,6 +82,8 @@ export class PaymentController {
         netAmount: payment.netAmount.toString(),
         currency: payment.currency,
         reference: payment.reference,
+        instructions: metadataParsed.instructions || null,
+        metadata: metadataParsed,
         createdAt: payment.createdAt,
         updatedAt: payment.updatedAt,
       },
@@ -79,13 +102,25 @@ export class PaymentController {
       req.ip
     );
 
+    let metadataParsed: Record<string, any> = {};
+    if (payment.metadata) {
+      try {
+        metadataParsed = JSON.parse(payment.metadata);
+      } catch {
+        // ignore parse error
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: {
         paymentId: payment.id,
+        id: payment.id,
         orderId: payment.orderId,
         status: payment.status,
         providerPaymentId: payment.providerPaymentId,
+        instructions: metadataParsed.instructions || null,
+        metadata: metadataParsed,
         updatedAt: payment.updatedAt,
       },
     });

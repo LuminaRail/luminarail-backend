@@ -10,6 +10,19 @@ export interface CreatePaymentRequest {
   metadata?: Record<string, unknown>;
 }
 
+export interface PaymentInstruction {
+  bankName?: string;
+  accountNumber?: string;
+  accountName?: string;
+  reference: string;
+  amount?: string;
+  currency?: string;
+  paymentUrl?: string;
+  qrCodeUrl?: string;
+  instructions?: string;
+  expiresAt?: string;
+}
+
 export interface NormalizedPaymentResponse {
   provider: string;
   providerPaymentId: string;
@@ -17,6 +30,7 @@ export interface NormalizedPaymentResponse {
   amount: string;
   currency: string;
   redirectUrl?: string;
+  instructions?: PaymentInstruction;
   metadata?: Record<string, unknown>;
   rawResponse?: Record<string, unknown>;
 }
