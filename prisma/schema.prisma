@@ -1,0 +1,388 @@
+// LuminaRail PostgreSQL Database Schema Foundation
+// Phase 1 & Phase 3 — Core Entities, Payments & Payment Providers
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  MERCHANT
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum QuoteStatus {
+  ACTIVE
+  EXPIRED
+  USED
+  CANCELLED
+}
+
+enum OrderType {
+  ON_RAMP
+  OFF_RAMP
+  MERCHANT_PAYMENT
+}
+
+enum OrderStatus {
+  CREATED
+  AWAITING_PAYMENT
+  PAYMENT_DETECTED
+  PAYMENT_CONFIRMED
+  SETTLEMENT_PENDING
+  SETTLEMENT_COMPLETED
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentType {
+  DEPOSIT
+  PAYMENT
+  PAYOUT
+  REFUND
+}
+
+enum PaymentStatus {
+  CREATED
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  EXPIRED
+  REFUNDED
+}
+
+enum SettlementStatus {
+  PENDING
+  SUBMITTING
+  SUBMITTED
+  CONFIRMING
+  COMPLETED
+  FAILED
+  REQUIRES_RECONCILIATION
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  SETTLEMENT
+  FEE
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESSFUL
+  FAILED
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  phone         String?        @unique
+  passwordHash  String         @map("password_hash")
+  role          Role           @default(USER)
+  status        UserStatus     @default(ACTIVE)
+  isKycVerified Boolean        @default(false) @map("is_kyc_verified")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  wallets       Wallet[]
+  orders        Order[]
+  payments      Payment[]
+  transactions  Transaction[]
+  merchants     Merchant[]
+  settlements   Settlement[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model Wallet {
+  id           String        @id @default(uuid())
+  userId       String        @map("user_id")
+  address      String        @map("address")
+  network      String        @default("testnet")
+  label        String        @default("Main Wallet")
+  verified     Boolean       @default(false)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@unique([userId, address])
+  @@map("wallets")
+}
+
+model Merchant {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  name         String
+  businessType String    @map("business_type")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKeys      ApiKey[]
+  webhooks     Webhook[]
+
+  @@map("merchants")
+}
+
+model ApiKey {
+  id         String    @id @default(uuid())
+  merchantId String    @map("merchant_id")
+  keyHash    String    @unique @map("key_hash")
+  label      String
+  expiresAt  DateTime? @map("expires_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  merchant   Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model Quote {
+  id                String      @id @default(uuid())
+  sourceCurrency    String      @map("source_currency")
+  destinationAsset  String      @map("destination_asset")
+  sourceAmount      Decimal     @map("source_amount") @db.Decimal(18, 4)
+  destinationAmount Decimal     @map("destination_amount") @db.Decimal(18, 4)
+  exchangeRate      Decimal     @map("exchange_rate") @db.Decimal(18, 6)
+  fee               Decimal     @db.Decimal(18, 4)
+  provider          String      @default("MOCK_PROVIDER")
+  status            QuoteStatus @default(ACTIVE)
+  expiresAt         DateTime    @map("expires_at")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+  orders            Order[]
+
+  @@map("quotes")
+}
+
+model Order {
+  id                String        @id @default(uuid())
+  userId            String        @map("user_id")
+  quoteId           String        @map("quote_id")
+  idempotencyKey    String?       @unique @map("idempotency_key")
+  type              OrderType     @default(ON_RAMP)
+  status            OrderStatus   @default(CREATED)
+  sourceCurrency    String        @map("source_currency")
+  destinationAsset  String        @map("destination_asset")
+  sourceAmount      Decimal       @map("source_amount") @db.Decimal(18, 4)
+  destinationAmount Decimal       @map("destination_amount") @db.Decimal(18, 4)
+  walletAddress     String?       @map("wallet_address")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  user              User          @relation(fields: [userId], references: [id])
+  quote             Quote         @relation(fields: [quoteId], references: [id])
+  payments          Payment[]
+  settlements       Settlement[]
+  transactions      Transaction[]
+
+  @@map("orders")
+}
+
+model PaymentProvider {
+  id                   String                @id @default(uuid())
+  name                 String                @unique
+  countryCode          String                @map("country_code")
+  isActive             Boolean               @default(true) @map("is_active")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+  providerTransactions ProviderTransaction[]
+  payments             Payment[]
+  payouts              Payout[]
+
+  @@map("payment_providers")
+}
+
+model Payment {
+  id                  String               @id @default(uuid())
+  orderId             String               @map("order_id")
+  userId              String               @map("user_id")
+  providerId          String?              @map("provider_id")
+  provider            String               @default("MOCK")
+  providerPaymentId   String?              @map("provider_payment_id")
+  type                PaymentType          @default(DEPOSIT)
+  amount              Decimal              @db.Decimal(18, 4)
+  grossAmount         Decimal              @default(0) @map("gross_amount") @db.Decimal(18, 4)
+  providerFee         Decimal              @default(0) @map("provider_fee") @db.Decimal(18, 4)
+  platformFee         Decimal              @default(0) @map("platform_fee") @db.Decimal(18, 4)
+  netAmount           Decimal              @default(0) @map("net_amount") @db.Decimal(18, 4)
+  currency            String
+  status              PaymentStatus        @default(CREATED)
+  reference           String               @unique
+  idempotencyKey      String?              @unique @map("idempotency_key")
+  metadata            String?
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  order               Order                @relation(fields: [orderId], references: [id])
+  user                User                 @relation(fields: [userId], references: [id])
+  paymentProvider     PaymentProvider?     @relation(fields: [providerId], references: [id])
+  providerTransaction ProviderTransaction?
+
+  @@map("payments")
+}
+
+model Payout {
+  id         String          @id @default(uuid())
+  providerId String          @map("provider_id")
+  amount     Decimal         @db.Decimal(18, 4)
+  currency   String
+  status     PaymentStatus   @default(CREATED)
+  reference  String          @unique
+  createdAt  DateTime        @default(now()) @map("created_at")
+  updatedAt  DateTime        @updatedAt @map("updated_at")
+  provider   PaymentProvider @relation(fields: [providerId], references: [id])
+
+  @@map("payouts")
+}
+
+model Settlement {
+  id                     String           @id @default(uuid())
+  settlementId           String           @unique @map("settlement_id")
+  orderId                String           @unique @map("order_id")
+  userId                 String           @map("user_id")
+  status                 SettlementStatus @default(PENDING)
+  asset                  String           @map("asset")
+  amount                 Decimal          @db.Decimal(18, 4)
+  source                 String?          @map("source")
+  destination            String?          @map("destination")
+  contractAddress        String?          @map("contract_address")
+  stellarTransactionHash String?          @map("stellar_transaction_hash")
+  stellarLedger          Int?             @map("stellar_ledger")
+  attemptCount           Int              @default(0) @map("attempt_count")
+  lastError              String?          @map("last_error")
+  submittedAt            DateTime?        @map("submitted_at")
+  confirmedAt            DateTime?        @map("confirmed_at")
+  createdAt              DateTime         @default(now()) @map("created_at")
+  updatedAt              DateTime         @updatedAt @map("updated_at")
+
+  order                  Order            @relation(fields: [orderId], references: [id])
+  user                   User             @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("settlements")
+}
+
+model Transaction {
+  id            String            @id @default(uuid())
+  userId        String?           @map("user_id")
+  orderId       String?           @map("order_id")
+  walletId      String?           @map("wallet_id")
+  type          TransactionType
+  status        TransactionStatus @default(PENDING)
+  stellarTxHash String?           @map("stellar_tx_hash")
+  amount        Decimal           @db.Decimal(18, 4)
+  asset         String
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  user          User?             @relation(fields: [userId], references: [id])
+  order         Order?            @relation(fields: [orderId], references: [id])
+  wallet        Wallet?           @relation(fields: [walletId], references: [id])
+
+  @@map("transactions")
+}
+
+model ProviderTransaction {
+  id                    String           @id @default(uuid())
+  paymentId             String           @unique @map("payment_id")
+  providerId            String?          @map("provider_id")
+  provider              String           @default("MOCK")
+  providerTransactionId String           @map("provider_transaction_id")
+  status                PaymentStatus    @default(CREATED)
+  amount                Decimal          @default(0) @db.Decimal(18, 4)
+  currency              String           @default("NGN")
+  rawResponse           String?          @map("raw_response")
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @updatedAt @map("updated_at")
+  payment               Payment          @relation(fields: [paymentId], references: [id])
+  paymentProvider       PaymentProvider? @relation(fields: [providerId], references: [id])
+
+  @@unique([provider, providerTransactionId])
+  @@map("provider_transactions")
+}
+
+model WebhookEvent {
+  id                String    @id @default(uuid())
+  provider          String
+  eventId           String    @map("event_id")
+  eventType         String    @map("event_type")
+  signatureVerified Boolean   @default(false) @map("signature_verified")
+  processed         Boolean   @default(false)
+  payload           String
+  receivedAt        DateTime  @default(now()) @map("received_at")
+  processedAt       DateTime? @map("processed_at")
+
+  @@unique([provider, eventId])
+  @@map("webhook_events")
+}
+
+model Webhook {
+  id         String            @id @default(uuid())
+  merchantId String            @map("merchant_id")
+  url        String
+  secret     String
+  isActive   Boolean           @default(true) @map("is_active")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+  merchant   Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@map("webhooks")
+}
+
+model WebhookDelivery {
+  id          String   @id @default(uuid())
+  webhookId   String   @map("webhook_id")
+  eventType   String   @map("event_type")
+  payload     String
+  statusCode  Int?     @map("status_code")
+  deliveredAt DateTime @default(now()) @map("delivered_at")
+  webhook     Webhook  @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@map("webhook_deliveries")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actor      String?  @map("actor")
+  userId     String?  @map("user_id")
+  action     String
+  resource   String
+  resourceId String?  @map("resource_id")
+  details    String?
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  title     String
+  message   String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
