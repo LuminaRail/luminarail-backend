@@ -52,6 +52,29 @@ export function errorHandler(
     return;
   }
 
+  if (err instanceof SyntaxError && 'body' in err) {
+    res.status(400).json({
+      success: false,
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Invalid JSON payload in request body.',
+      },
+    });
+    return;
+  }
+
+  const httpStatus = (err as { statusCode?: number; status?: number }).statusCode || (err as { statusCode?: number; status?: number }).status;
+  if (typeof httpStatus === 'number' && httpStatus >= 400 && httpStatus < 500) {
+    res.status(httpStatus).json({
+      success: false,
+      error: {
+        code: httpStatus === 401 ? 'UNAUTHORIZED' : httpStatus === 403 ? 'FORBIDDEN' : 'BAD_REQUEST',
+        message: err.message || 'Invalid request.',
+      },
+    });
+    return;
+  }
+
   if (config.env !== 'test') {
     console.error('Unhandled Error:', err);
   }
