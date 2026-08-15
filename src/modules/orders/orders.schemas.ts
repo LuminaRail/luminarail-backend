@@ -7,10 +7,10 @@ export const createOrderSchema = z.object({
   type: z.nativeEnum(OrderType).optional().default(OrderType.ON_RAMP),
   walletAddress: z
     .string()
-    .refine((val) => StrKey.isValidEd25519PublicKey(val), {
+    .optional()
+    .refine((val) => !val || StrKey.isValidEd25519PublicKey(val), {
       message: 'Invalid Stellar wallet address format.',
-    })
-    .optional(),
+    }),
   idempotencyKey: z.string().max(128).optional(),
 });
 

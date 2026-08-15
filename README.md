@@ -223,7 +223,10 @@ STELLAR_SETTLEMENT_SIGNER_SECRET_KEY=<stellar_secret_key>
 JWT_SECRET=<your_jwt_secret_placeholder>
 JWT_EXPIRES_IN=1d
 
-# Payment Provider Configuration
+# Payment Provider Configuration (NGN Fiat On-Ramp)
+NGN_PROVIDER=sandbox                     # Choice of payment rail provider: 'sandbox' or 'paystack'
+PAYSTACK_SECRET_KEY=sk_test_xxx           # Paystack TEST MODE secret key (required when NGN_PROVIDER=paystack)
+PAYSTACK_BASE_URL=https://api.paystack.co # Paystack API base URL
 PAYMENT_PROVIDER_ID=default_provider
 PAYMENT_PROVIDER_API_KEY=<provider_api_key_placeholder>
 PAYMENT_PROVIDER_WEBHOOK_SECRET=<webhook_secret_placeholder>
@@ -235,6 +238,45 @@ QUOTE_PROVIDER=real
 QUOTE_EXPIRY_SECONDS=30
 QUOTE_FEE_PERCENTAGE=0.01
 ```
+
+---
+
+## NGN On-Ramp / Paystack TEST MODE Integration
+
+LuminaRail provides a vendor-agnostic NGN Fiat On-Ramp architecture supporting two payment rail providers configured via `NGN_PROVIDER`:
+
+### 1. Sandbox Provider (`NGN_PROVIDER=sandbox`)
+* **Purpose**: Local offline development and automated CI testing.
+* **Behavior**: Generates deterministic virtual bank account numbers (`99xxxxxx`), stores payment state in memory, and allows 1-click sandbox transfer simulation without external API calls.
+* **Credentials**: Requires no external API keys or secret credentials.
+
+### 2. Paystack TEST MODE Provider (`NGN_PROVIDER=paystack`)
+* **Purpose**: Sandbox integration testing with Paystack's official TEST MODE APIs.
+* **Behavior**: Communicates directly with Paystack API (`POST https://api.paystack.co/transaction/initialize`) to create dynamic Paystack Checkout authorization URLs (`paymentUrl`), supporting test bank transfers and test card simulation.
+* **Credentials Required**:
+  ```env
+  NGN_PROVIDER=paystack
+  PAYSTACK_SECRET_KEY=sk_test_your_secret_key_here
+  PAYSTACK_BASE_URL=https://api.paystack.co
+  ```
+  *Safety Enforced*: If `NGN_PROVIDER=paystack` is configured without `PAYSTACK_SECRET_KEY`, application startup halts immediately with a clear configuration validation error.
+
+### Payment & Settlement Lifecycle
+1. **Quote Creation**: User requests NGN ➔ USDC exchange quote (`POST /api/v1/quotes`).
+2. **Order Creation**: User connects Stellar wallet and creates order (`POST /api/v1/orders`).
+3. **Payment Initialization**: Backend calls Paystack TEST API to initialize transaction and returns normalized `paymentUrl` and `reference`. Order moves to `AWAITING_PAYMENT`.
+4. **Paystack Test Checkout**: User completes test transfer or test card transaction on Paystack's hosted sandbox page.
+5. **Webhook & Verification**: Paystack posts signed event (`x-paystack-signature`) to `POST /api/v1/webhooks/paystack`. Backend validates HMAC-SHA512 signature and re-verifies transaction status with Paystack (`GET /transaction/verify/:reference`). Upon status `success`, payment updates to `SUCCEEDED`.
+6. **Wallet Security Gate**: If the order has a linked Stellar destination wallet, it transitions to `SETTLEMENT_PENDING`. If wallet is unlinked, order transitions to `PAYMENT_CONFIRMED` until address is linked.
+7. **Soroban On-Chain Settlement**: `SettlementWorker` processes `SETTLEMENT_PENDING` orders, executing Soroban USDC token contract transfers to the user's connected Stellar wallet.
+
+### Webhook Endpoint
+* **URL**: `POST /api/v1/webhooks/paystack` (or `POST /api/v1/webhooks/ngn`)
+* **Signature Header**: `x-paystack-signature` (HMAC-SHA512 of raw request body signed with `PAYSTACK_SECRET_KEY`).
+
+### Limitations & Test Mode Notice
+> [!IMPORTANT]
+> This integration operates strictly in **TEST MODE**. It uses Paystack test keys (`sk_test_...`) and test checkout URLs. **NO REAL BANK DEPOSITS OR REAL NAIRA ARE PROCESSED.** Do not send real bank transfers to test references.
 
 > [!CAUTION]
 > **NEVER** commit real API keys, database credentials, JWT secrets, or Stellar secret keys (`S...`) to version control.

@@ -5,6 +5,7 @@ export const createPaymentSchema = z.object({
   orderId: z.string().uuid('orderId must be a valid UUID'),
   currency: z.string().min(3).max(5).default('NGN'),
   type: z.nativeEnum(PaymentType).default(PaymentType.DEPOSIT),
+  provider: z.string().optional(),
 });
 
 export const paymentIdParamSchema = z.object({

@@ -57,7 +57,7 @@ export class PaymentService {
     const platformFee = grossAmount.mul(new Decimal('0.01'));
     const netAmount = grossAmount.sub(platformFee);
     const reference = `PAY_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const providerName = 'MOCK';
+    const providerName = (input.provider || 'MOCK').toUpperCase();
     const provider = PaymentProviderRegistry.get(providerName);
 
     let initialPayment;
@@ -68,7 +68,7 @@ export class PaymentService {
         data: {
           orderId: order.id,
           userId,
-          provider: providerName,
+          provider: provider.providerId,
           type: input.type || PaymentType.DEPOSIT,
           amount: grossAmount,
           grossAmount,
@@ -124,7 +124,7 @@ export class PaymentService {
         await tx.providerTransaction.create({
           data: {
             paymentId: initialPayment.id,
-            provider: providerName,
+            provider: provider.providerId,
             providerTransactionId: providerResponse.providerPaymentId,
             status: providerResponse.status,
             amount: grossAmount,
@@ -135,11 +135,17 @@ export class PaymentService {
           },
         });
 
+        const metadataObj = {
+          ...(providerResponse.metadata || {}),
+          ...(providerResponse.instructions ? { instructions: providerResponse.instructions } : {}),
+        };
+
         const updated = await tx.payment.update({
           where: { id: initialPayment.id },
           data: {
             providerPaymentId: providerResponse.providerPaymentId,
             status: providerResponse.status,
+            metadata: JSON.stringify(metadataObj),
           },
           include: { providerTransaction: true },
         });
