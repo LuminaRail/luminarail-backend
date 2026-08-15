@@ -8,26 +8,31 @@ import { AuthUserPayload } from '../types/express.js';
 export function authenticateToken(req: Request, _res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new UnauthorizedError('Authentication token is required.');
+    return next(new UnauthorizedError('Authentication token is required.'));
   }
 
   const token = authHeader.split(' ')[1];
   try {
     const payload = jwt.verify(token, config.jwt.secret) as AuthUserPayload;
     if (!payload || !payload.id || !payload.role) {
-      throw new UnauthorizedError('Invalid authentication token payload.');
+      return next(new UnauthorizedError('Invalid authentication token payload.'));
     }
     if (payload.status === 'SUSPENDED') {
-      throw new ForbiddenError('User account is suspended.');
+      return next(new ForbiddenError('User account is suspended.'));
     }
     req.user = payload;
     next();
   } catch (err) {
     if (err instanceof ForbiddenError || err instanceof UnauthorizedError) {
-      next(err);
-    } else {
-      next(new UnauthorizedError('Invalid or expired authentication token.'));
+      return next(err);
     }
+    if (err instanceof jwt.TokenExpiredError) {
+      return next(new UnauthorizedError('Authentication token has expired. Please log in again.'));
+    }
+    if (err instanceof jwt.JsonWebTokenError) {
+      return next(new UnauthorizedError('Invalid authentication token format or signature.'));
+    }
+    return next(new UnauthorizedError('Invalid or expired authentication token.'));
   }
 }
 
