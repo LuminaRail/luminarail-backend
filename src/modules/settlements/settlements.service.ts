@@ -1,4 +1,5 @@
 import { OrderStatus, Prisma, SettlementStatus } from '@prisma/client';
+import { StrKey } from '@stellar/stellar-sdk';
 import { prisma } from '../../db/prisma.js';
 import {
   NotFoundError,
@@ -35,9 +36,15 @@ export class SettlementService {
       return { settlement: existingSettlement, isDuplicate: true };
     }
 
-    // 3. Strict order status validation: must be SETTLEMENT_PENDING for new settlement creation
+    // 3. Strict order status & wallet address validation
     if (order.status !== OrderStatus.SETTLEMENT_PENDING) {
       throw new InvalidOrderStateForSettlementError(order.status);
+    }
+
+    if (!order.walletAddress || order.walletAddress.trim() === '') {
+      throw new InvalidOrderStateForSettlementError(
+        'Order does not have a destination Stellar wallet address.'
+      );
     }
 
     // 4. Server-derived amount and asset details (derived strictly from Order)

@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/db/prisma.js';
+import { QuoteService } from '../src/modules/quotes/quotes.service.js';
+import { MockQuoteProvider } from '../src/modules/quotes/providers/mock-quote.provider.js';
 
 describe('Orders & Idempotency API Endpoints', () => {
   const app = createApp();
@@ -26,7 +28,7 @@ describe('Orders & Idempotency API Endpoints', () => {
       password: 'Password123!',
     });
     otherUserToken = res2.body.data.token;
-
+    QuoteService.setProvider(new MockQuoteProvider());
     const qRes = await request(app).post('/api/v1/quotes').send({
       sourceCurrency: 'NGN',
       destinationAsset: 'USDC',

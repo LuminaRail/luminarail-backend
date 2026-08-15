@@ -13,7 +13,7 @@ export const envSchema = z.object({
   STELLAR_NETWORK: z.enum(['testnet', 'futurenet', 'public', 'mainnet']).default('testnet'),
   STELLAR_RPC_URL: z.string().url('STELLAR_RPC_URL must be a valid URL').default('https://soroban-testnet.stellar.org'),
   STELLAR_HORIZON_URL: z.string().url('STELLAR_HORIZON_URL must be a valid URL').default('https://horizon-testnet.stellar.org'),
-    STELLAR_USDC_ISSUER: z
+  STELLAR_USDC_ISSUER: z
     .string()
     .min(1, 'STELLAR_USDC_ISSUER environment variable is required')
     .refine((val) => StrKey.isValidEd25519PublicKey(val), {
@@ -21,11 +21,11 @@ export const envSchema = z.object({
     }),
 
   STELLAR_USDC_CONTRACT_ID: z
-  .string()
-  .optional()
-  .refine((val) => !val || StrKey.isValidContract(val), {
-    message: 'STELLAR_USDC_CONTRACT_ID must be a valid Stellar contract address',
-  }),
+    .string()
+    .optional()
+    .refine((val) => !val || StrKey.isValidContract(val), {
+      message: 'STELLAR_USDC_CONTRACT_ID must be a valid Stellar contract address',
+    }),
   STELLAR_SETTLEMENT_VAULT_CONTRACT_ID: z.string().optional().default(''),
   SOROBAN_SETTLEMENT_VAULT_CONTRACT_ID: z.string().optional().default(''),
   SOROBAN_ESCROW_CONTRACT_ID: z.string().optional().default(''),
@@ -44,6 +44,11 @@ export const envSchema = z.object({
     }),
   JWT_SECRET: z.string().default('dev_secret_change_me_in_production'),
   JWT_EXPIRES_IN: z.string().default('1d'),
+  FX_API_URL: z.string().url('FX_API_URL must be a valid URL').default('https://open.er-api.com/v6/latest/USD'),
+  FX_API_KEY: z.string().optional().default(''),
+  QUOTE_PROVIDER: z.enum(['real', 'mock']).default('real'),
+  QUOTE_EXPIRY_SECONDS: z.string().transform((val) => parseInt(val, 10)).default('30'),
+  QUOTE_FEE_PERCENTAGE: z.string().transform((val) => parseFloat(val)).default('0.01'),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -79,5 +84,12 @@ export const config = {
   jwt: {
     secret: envData.JWT_SECRET,
     expiresIn: envData.JWT_EXPIRES_IN,
+  },
+  quotes: {
+    provider: envData.QUOTE_PROVIDER,
+    fxApiUrl: envData.FX_API_URL,
+    fxApiKey: envData.FX_API_KEY,
+    expirySeconds: envData.QUOTE_EXPIRY_SECONDS,
+    feePercentage: envData.QUOTE_FEE_PERCENTAGE,
   },
 };

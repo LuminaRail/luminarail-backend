@@ -152,4 +152,47 @@ export class OrderService {
 
     return updatedOrder;
   }
+
+  static async updateOrderWallet(
+    orderId: string,
+    userId: string,
+    walletAddress: string,
+    isAdmin = false
+  ) {
+    const order = await this.getOrderById(userId, orderId, isAdmin);
+
+    const hasSucceededPayment =
+      order.payments?.some((p) => p.status === 'SUCCEEDED') ||
+      order.status === OrderStatus.PAYMENT_CONFIRMED;
+
+    const newStatus = hasSucceededPayment ? OrderStatus.SETTLEMENT_PENDING : order.status;
+
+    const updatedOrder = await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        walletAddress,
+        status: newStatus,
+      },
+      include: {
+        quote: true,
+        transactions: true,
+        payments: true,
+        settlements: true,
+      },
+    });
+
+    await AuditService.log({
+      actor: userId,
+      userId: order.userId,
+      action: 'ORDER_WALLET_ATTACHED',
+      resource: 'Order',
+      resourceId: order.id,
+      details: {
+        walletAddress,
+        status: newStatus,
+      },
+    });
+
+    return updatedOrder;
+  }
 }

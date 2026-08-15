@@ -3,6 +3,8 @@ import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { prisma } from '../../src/db/prisma.js';
 import { MockPaymentProvider } from '../../src/modules/providers/mock.provider.js';
+import { QuoteService } from '../../src/modules/quotes/quotes.service.js';
+import { MockQuoteProvider } from '../../src/modules/quotes/providers/mock-quote.provider.js';
 
 describe('Payment & Webhook Hardening (Security, Concurrency & Idempotency)', () => {
   const app = createApp();
@@ -16,6 +18,7 @@ describe('Payment & Webhook Hardening (Security, Concurrency & Idempotency)', ()
   const sharedKey = `idemp_shared_${Date.now()}`;
 
   beforeAll(async () => {
+  QuoteService.setProvider(new MockQuoteProvider());
     MockPaymentProvider.clearMockStore();
 
     const r1 = await request(app).post('/api/v1/auth/register').send({

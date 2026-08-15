@@ -36,6 +36,7 @@ export class SettlementWorker {
     const eligibleOrders = await prisma.order.findMany({
       where: {
         status: OrderStatus.SETTLEMENT_PENDING,
+        walletAddress: { not: null },
         OR: [
           { settlements: { none: {} } },
           { settlements: { some: { status: SettlementStatus.PENDING } } },

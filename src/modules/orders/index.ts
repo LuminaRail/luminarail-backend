@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { OrderService } from './orders.service.js';
 import { authenticateToken } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
-import { createOrderSchema, orderIdParamSchema } from './orders.schemas.js';
+import { createOrderSchema, orderIdParamSchema, updateOrderWalletSchema } from './orders.schemas.js';
 
 export const ordersRouter = Router();
 
@@ -56,6 +56,28 @@ ordersRouter.get(
       res.status(200).json({
         success: true,
         data: order,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+ordersRouter.patch(
+  '/:id/wallet',
+  validate({ params: orderIdParamSchema, body: updateOrderWalletSchema }),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const isAdmin = req.user!.role === 'ADMIN' || req.user!.role === 'SUPER_ADMIN';
+      const updated = await OrderService.updateOrderWallet(
+        req.params.id as string,
+        req.user!.id,
+        req.body.walletAddress,
+        isAdmin
+      );
+      res.status(200).json({
+        success: true,
+        data: updated,
       });
     } catch (err) {
       next(err);
