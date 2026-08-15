@@ -178,6 +178,7 @@ describe('SettlementWorker Live Soroban Flow & Idempotency Tests', () => {
         destinationAsset: 'USDC',
         sourceAmount: 5000,
         destinationAmount: 3.2,
+        walletAddress: 'GBBD47IF6LWK2P7MDEVSCWR7DPUWV3NY3DTQEVFL4TW4D366A5VJ26CM',
         status: OrderStatus.SETTLEMENT_PENDING,
       },
     });

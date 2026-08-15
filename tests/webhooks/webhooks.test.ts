@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { prisma } from '../../src/db/prisma.js';
+import { QuoteService } from '../../src/modules/quotes/quotes.service.js';
+import { MockQuoteProvider } from '../../src/modules/quotes/providers/mock-quote.provider.js';
 
 describe('Webhooks API & Signature Verification', () => {
   const app = createApp();
@@ -14,6 +16,7 @@ describe('Webhooks API & Signature Verification', () => {
   const eventId = `evt_wh_${Date.now()}`;
 
   beforeAll(async () => {
+  QuoteService.setProvider(new MockQuoteProvider());
     const r1 = await request(app).post('/api/v1/auth/register').send({
       email: userEmail,
       password: 'Password123!',
@@ -59,6 +62,7 @@ describe('Webhooks API & Signature Verification', () => {
       });
       await prisma.payment.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.transaction.deleteMany({ where: { userId: { in: userIds } } });
+      await prisma.settlement.deleteMany({ where: { order: { userId: { in: userIds } } } });
       await prisma.order.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.auditLog.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.user.deleteMany({ where: { id: { in: userIds } } });

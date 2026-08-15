@@ -76,7 +76,7 @@ describe('Settlement API Endpoints', () => {
         destinationAsset: 'USDC',
         sourceAmount: 15000,
         destinationAmount: 10,
-        walletAddress: 'GSETTLEMENT_API_WALLET_ADDRESS',
+        walletAddress: 'GBBD47IF6LWK2P7MDEVSCWR7DPUWV3NY3DTQEVFL4TW4D366A5VJ26CM',
         status: OrderStatus.SETTLEMENT_PENDING,
       },
     });

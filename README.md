@@ -1,190 +1,338 @@
 # LuminaRail Backend (`luminarail-backend`)
 
-> **"Open financial rails for Stellar."**
+> **Open financial rails for Stellar.**
 
-`luminarail-backend` is the core settlement engine and API layer of LuminaRail. It provides a modular settlement infrastructure connecting local payment rails (starting with Nigeria NGN) to Stellar network assets (USDC).
+`luminarail-backend` is the core modular settlement engine and API service for LuminaRail. It provides a settlement infrastructure connecting local payment rails (such as Nigerian NGN fiat processing) to Stellar network assets (USDC) with automated on-chain Soroban settlement execution.
 
 ---
 
-## High-Level Architecture
+## Overview
 
-The backend is built as a **Modular Monolith** using Node.js, Express, TypeScript, Prisma ORM, PostgreSQL, and `@stellar/stellar-sdk`.
+### What the Project Does
+`luminarail-backend` serves as the backend infrastructure for LuminaRail. It manages user authentication, wallet registrations, foreign exchange (FX) quotes, order lifecycles, payment processing, webhook ingestion, transaction tracking, audit logging, and automated testnet settlement on the Stellar blockchain via Soroban smart contracts.
+
+### The Problem It Solves
+Cross-border settlements between local payment rails and digital asset networks often suffer from high transaction costs, lack of transaction transparency, manual settlement processing, floating-point currency rounding errors, and security vulnerabilities. `luminarail-backend` solves these issues by providing:
+- **Vendor-Agnostic Payment Abstraction**: Clean separation between local fiat payment providers and core settlement logic.
+- **Idempotency Guarantees**: Protection against duplicate orders, payments, and webhook events across concurrent network requests.
+- **Automated Soroban Settlement**: Background workers (`SettlementWorker`) that execute, simulate, sign, and monitor on-chain settlement transactions.
+- **Strict Non-Custodial Architecture**: User private keys and secret seeds are never stored, logged, or accepted over HTTP boundaries.
+
+### Ecosystem Purpose
+Within the broader LuminaRail ecosystem, `luminarail-backend` acts as the bridge between client applications (`luminarail-frontend`) and Stellar smart contracts (`luminarail-contracts`).
+
+### Who Can Contribute
+Developers with experience in Node.js, Express, TypeScript, Prisma ORM, PostgreSQL, financial APIs, or Stellar/Soroban blockchain integration are welcome to contribute.
+
+---
+
+## Features
+
+- **User Authentication & RBAC**: JWT-based authentication with bcrypt password hashing (cost factor 10) and Role-Based Access Control (`USER`, `MERCHANT`, `ADMIN`, `SUPER_ADMIN`).
+- **User Profile Management**: Retrieve current authenticated user details (`GET /api/v1/users/me`).
+- **Non-Custodial Wallet Management**: Register public Stellar addresses (`G...`), list user wallets, delete registered wallets, and perform address format validation.
+- **FX Quote Generation**: Support for both deterministic sandbox quotes (`MockQuoteProvider`) and real-time exchange rate calculation (`RealFxQuoteProvider`). Calculates exchange rates, fee percentages, and expiration timestamps.
+- **Order State Machine & Idempotency**: Creation and management of order lifecycles (`CREATED` → `PAYMENT_PENDING` → `PAYMENT_RECEIVED` → `SETTLEMENT_PENDING` → `COMPLETED` / `FAILED` / `CANCELLED`). Idempotency enforcement via `Idempotency-Key` headers.
+- **Payment Processing & Provider Abstraction**: Provider-agnostic `IPaymentProvider` interface. Phase 3 includes `MockPaymentProvider` for deterministic local payment processing simulation.
+- **Webhook Processing & Verification**: Secure webhook handling (`POST /api/v1/webhooks/:provider`) with HMAC signature verification (`x-webhook-signature`) and database deduplication via `WebhookEvent`.
+- **Transaction & Audit Logging**: User transaction history tracking and sensitive-redacted audit logs accessible to system administrators.
+- **Stellar Integration Gateway**: Dedicated Stellar gateway (`src/stellar/`) providing normalized account lookup, balance inspection, asset allowlisting (USDC, XLM), and transaction history queries.
+- **Soroban Testnet Settlement Engine**: Automated background process (`SettlementWorker`) managing a 7-state settlement lifecycle (`PENDING` → `SUBMITTING` → `SUBMITTED` → `CONFIRMING` → `COMPLETED` / `FAILED` / `REQUIRES_RECONCILIATION`), pre-flight transaction simulation, and testnet Soroban RPC polling.
+
+---
+
+## Architecture
+
+`luminarail-backend` is structured as a **Modular Monolith** using TypeScript, Express, Prisma ORM, and PostgreSQL.
 
 ```
-src/
-├── app.ts            # Express application setup, middleware, health endpoint
-├── server.ts         # Application entry point
-├── config/           # Centralized configuration & Zod startup environment validation
-├── db/               # PrismaClient database connection singleton
-├── errors/           # Standardized error definitions (AppError, PaymentError, StellarError, etc.)
-├── middleware/       # JWT Authentication, RBAC, Validation, Error Handling
-├── modules/          # Clean domain module boundaries
-│   ├── auth/         # JWT Register, Login, Logout
-│   ├── users/        # User profile management (/users/me)
-│   ├── wallets/      # Non-custodial Stellar wallet management & address validation
-│   ├── quotes/       # FX exchange rates & deterministic mock quote engine
-│   ├── orders/       # Order creation, state machine & Idempotency-Key handling
-│   ├── payments/     # Payment creation, retrieval, verification & state machine
-│   ├── providers/    # Vendor-agnostic IPaymentProvider & MockPaymentProvider
-│   ├── webhooks/     # Webhook signature verification, idempotency & event processing
-│   ├── transactions/ # Application-level transaction tracking
-│   └── audit/        # Sensitive-redacted audit log recording & admin lookup
-└── stellar/          # Stellar Integration Layer (Stellar Gateway)
-    ├── config/       # Stellar network config & testnet safety assertions
-    ├── horizon/      # Dedicated Horizon RPC client
-    ├── soroban/      # Dedicated Soroban RPC client
-    ├── accounts/     # Non-custodial account service & address validation
-    ├── assets/       # Asset service, allowlisting & normalization
-    ├── balances/     # Balance normalization with string precision
-    ├── transactions/ # Transaction lookup & normalization
-    ├── cache/        # Pluggable cache abstraction (memory / Redis)
-    └── routes/       # Read-only Stellar API endpoints (/api/v1/stellar/*)
+Client App (luminarail-frontend / HTTP API Clients)
+       │
+       ▼
+Express API Layer (src/app.ts & src/modules/*)
+       │
+       ├── Middleware (JWT Auth, RBAC, Rate Limiter, Helmet, Error Handling)
+       │
+       ├── Core Services
+       │     ├── Auth & User Service
+       │     ├── Wallet Service (Non-custodial address validation)
+       │     ├── Quote Service (MockQuoteProvider / RealFxQuoteProvider)
+       │     ├── Order & Payment Engine (Idempotency-Key & Provider abstraction)
+       │     └── Webhook Engine (HMAC Verification & Deduplication)
+       │
+       ├── Database Layer (Prisma Client & PostgreSQL)
+       │
+       └── Stellar Gateway (src/stellar/) & Settlement Engine (src/workers/)
+             │
+             ├── Soroban RPC Client & Simulation Engine
+             └── Stellar Testnet Soroban Contracts (SettlementVault)
 ```
 
 ### Architectural Safeguards
 
-1. **Payment Provider Abstraction**: Core domains depend strictly on the vendor-agnostic `IPaymentProvider` abstraction. Vendor-specific response formats are never leaked.
-2. **Deterministic Sandbox Provider**: Phase 3 operates exclusively on `MockPaymentProvider` (no real payment API credentials, real NGN processing, or live settlement).
-3. **Stellar Gateway Boundary**: Application modules communicate with Stellar exclusively via `src/stellar/` services.
-4. **Idempotency**: Financial requests (`POST /api/v1/orders`, `POST /api/v1/payments`, `POST /api/v1/webhooks/:provider`) support server-side `Idempotency-Key` and `WebhookEvent` database deduplication.
-5. **Non-Custodial Model**: Private keys, secret seeds (`S...`), card numbers, CVVs, and provider secrets are strictly forbidden across all HTTP boundaries.
-6. **Monetary Precision**: All financial amounts use string/decimal representations to eliminate JavaScript floating-point rounding errors.
+1. **Payment Provider Abstraction**: Core domains interact strictly through the vendor-agnostic `IPaymentProvider` interface. Vendor response details are never leaked.
+2. **Deterministic Sandbox Provider**: Operates with `MockPaymentProvider` for safe local development without external API keys or live fiat processing.
+3. **Stellar Gateway Isolation**: Blockchain interactions are centralized in `src/stellar/` services.
+4. **Idempotency**: Server-side deduplication using `Idempotency-Key` headers for financial requests (`orders`, `payments`) and `WebhookEvent` records for webhooks.
+5. **Non-Custodial Model**: Private keys, secret seeds (`S...`), card details, and provider secrets are rejected across HTTP boundaries.
+6. **Monetary Precision**: All monetary values use string/decimal representations (`Decimal` in Prisma) to avoid floating-point rounding issues.
 
 ---
 
-## Local Development Setup
+## Tech Stack
 
-### 1. Prerequisites
-- Node.js >= 20.x
-- Docker & Docker Compose
+- **Runtime**: Node.js >= 20.x
+- **Framework**: Express 4.21
+- **Language**: TypeScript 5.7
+- **Database & ORM**: PostgreSQL with Prisma ORM 6.3
+- **Blockchain SDK**: `@stellar/stellar-sdk` 16.2
+- **Testing Framework**: Vitest 3.0 with Supertest 7.2
+- **Security & Utilities**: Zod (environment & payload validation), bcryptjs, jsonwebtoken, Helmet, express-rate-limit
 
-### 2. Quick Start for New Developers
+---
 
-```bash
-# Clone & navigate to backend directory
-cd luminarail-backend
+## Project Structure
 
-# Install dependencies
-npm install
-
-# Copy environment variable configuration template
-cp .env.example .env
-
-# Start local PostgreSQL database container
-docker compose up -d
-
-# Generate Prisma Client
-npm run db:generate
-
-# Apply database migrations
-npx prisma migrate dev
-
-# Start development server
-npm run dev
+```
+luminarail-backend/
+├── .env.example           # Configuration template (NO real secrets)
+├── docker-compose.yml     # Local PostgreSQL container specification
+├── package.json           # Node.js dependencies & development scripts
+├── tsconfig.json          # TypeScript compiler configuration
+├── CONTRIBUTING.md        # Basic contribution guidelines
+├── SECURITY.md            # Security policy and disclosure process
+├── LICENSE                # MIT License
+├── prisma/
+│   ├── schema.prisma      # Database schema definitions & models
+│   └── migrations/        # PostgreSQL SQL migration history
+├── src/
+│   ├── app.ts             # Express application configuration & routes mounting
+│   ├── server.ts          # Server entry point & HTTP listener setup
+│   ├── config/            # Centralized configuration & Zod environment validation
+│   ├── db/                # Prisma client singleton connection
+│   ├── errors/            # Standardized application error classes
+│   ├── middleware/        # Authentication, validation, and rate-limiting middleware
+│   ├── modules/           # Domain modules
+│   │   ├── admin/         # Administrative actions
+│   │   ├── audit/         # Audit logging service & endpoints
+│   │   ├── auth/          # Authentication (Register, Login, Logout)
+│   │   ├── merchants/     # Merchant management
+│   │   ├── orders/        # Order management & state transitions
+│   │   ├── payments/      # Payment processing & verification
+│   │   ├── providers/     # Payment provider interfaces & implementations
+│   │   ├── quotes/        # FX rate generation & providers
+│   │   ├── settlements/   # Settlement records & management
+│   │   ├── transactions/  # System transaction logs
+│   │   ├── users/         # User profile management
+│   │   ├── wallets/       # Non-custodial Stellar wallet address storage
+│   │   └── webhooks/      # Webhook handling & signature verification
+│   ├── stellar/           # Stellar Network Gateway
+│   │   ├── accounts/      # Address validation & account lookup
+│   │   ├── assets/        # Asset definitions & allowlisting
+│   │   ├── balances/      # Balance normalization
+│   │   ├── cache/         # Memory & Redis cache abstractions
+│   │   ├── config/        # Network configuration & safety assertions
+│   │   ├── horizon/       # Horizon RPC client wrappers
+│   │   ├── routes/        # Read-only Stellar REST API routes
+│   │   ├── soroban/       # Soroban RPC client & contract executor
+│   │   └── transactions/  # Stellar transaction lookup
+│   ├── types/             # Common TypeScript interfaces
+│   └── workers/           # Background process workers (SettlementWorker)
+├── docs/                  # Developer & architecture documentation
+│   ├── architecture.md    # System architecture & state machines
+│   └── contributing.md    # In-depth contributor guide
+└── tests/                 # Vitest automated test suite (25 test files)
 ```
 
-The API will be available at `http://localhost:4000/api/v1`.
+---
+
+## Getting Started
+
+### Prerequisites
+- Node.js >= 20.x
+- npm >= 10.x
+- Docker & Docker Compose (for local PostgreSQL database)
+
+### Quick Start Instructions
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/LuminaRail/luminarail-backend.git
+   cd luminarail-backend
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Configure Environment Variables**:
+   ```bash
+   cp .env.example .env
+   ```
+   *Note: Never place real secrets in `.env` files.*
+
+4. **Start PostgreSQL Container**:
+   ```bash
+   docker compose up -d
+   ```
+
+5. **Generate Prisma Client & Run Database Migrations**:
+   ```bash
+   npm run db:generate
+   npx prisma migrate dev
+   ```
+
+6. **Start Development Server**:
+   ```bash
+   npm run dev
+   ```
+   The API will be running at `http://localhost:4000/api/v1`.
 
 ---
 
-## PostgreSQL & Database Migrations
+## Environment Variables
 
-Local database services are managed via Docker Compose (`docker-compose.yml`):
+The backend relies on environment variables validated at application startup using Zod schemas (`src/config/index.ts`). Below is the configuration specification:
+
+```env
+# Application Settings
+NODE_ENV=development
+PORT=4000
+API_PREFIX=/api/v1
+
+# Database Configuration (PostgreSQL)
+DATABASE_URL=postgresql://<user>:<password>@localhost:5432/<dbname>?schema=public
+
+# Cache Configuration (Optional)
+REDIS_URL=redis://localhost:6379
+
+# Stellar Network Configuration (Testnet ONLY)
+STELLAR_NETWORK=testnet
+STELLAR_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
+STELLAR_USDC_ISSUER=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+STELLAR_SETTLEMENT_VAULT_CONTRACT_ID=<soroban_contract_id>
+SOROBAN_SETTLEMENT_VAULT_CONTRACT_ID=<soroban_contract_id>
+SOROBAN_ESCROW_CONTRACT_ID=<soroban_contract_id>
+SOROBAN_FEE_MANAGER_CONTRACT_ID=<soroban_contract_id>
+STELLAR_SETTLEMENT_SIGNER_PUBLIC_KEY=<stellar_public_key>
+STELLAR_SETTLEMENT_SIGNER_SECRET_KEY=<stellar_secret_key>
+
+# JWT Authentication
+JWT_SECRET=<your_jwt_secret_placeholder>
+JWT_EXPIRES_IN=1d
+
+# Payment Provider Configuration
+PAYMENT_PROVIDER_ID=default_provider
+PAYMENT_PROVIDER_API_KEY=<provider_api_key_placeholder>
+PAYMENT_PROVIDER_WEBHOOK_SECRET=<webhook_secret_placeholder>
+
+# FX Quote Provider Configuration
+FX_API_URL=https://open.er-api.com/v6/latest/USD
+FX_API_KEY=<fx_api_key_placeholder>
+QUOTE_PROVIDER=real
+QUOTE_EXPIRY_SECONDS=30
+QUOTE_FEE_PERCENTAGE=0.01
+```
+
+> [!CAUTION]
+> **NEVER** commit real API keys, database credentials, JWT secrets, or Stellar secret keys (`S...`) to version control.
+
+---
+
+## Development
+
+Available npm scripts in `package.json`:
 
 ```bash
-# Start PostgreSQL container
-docker compose up -d
+# Start dev server with auto-reload (tsx watch)
+npm run dev
 
-# Stop PostgreSQL container
-docker compose down
+# Compile TypeScript to dist/
+npm run build
 
-# Validate Prisma schema syntax
-npx prisma validate
+# Start production server from dist/
+npm run start
+
+# Run ESLint across src/
+npm run lint
+
+# Run TypeScript type check (no emit)
+npm run type-check
 
 # Generate Prisma client bindings
-npx prisma generate
+npm run db:generate
 
-# Create and apply new migrations locally
-npx prisma migrate dev --name <migration_name>
-
-# Deploy migrations in non-interactive CI/CD
-npx prisma migrate deploy
-
-# Check migration status
-npx prisma migrate status
+# Create and apply Prisma migrations locally
+npm run db:migrate
 ```
 
 ---
 
-## API Endpoint Structure (`/api/v1`)
+## Testing
+
+The project uses [Vitest](https://vitest.dev/) for unit and integration testing.
+
+```bash
+# Run full Vitest test suite
+npm test
+```
+
+### Test Coverage Summary
+The test suite contains 25 test files covering:
+- **Authentication**: User registration, login, JWT validation (`auth.test.ts`).
+- **Orders**: Order creation, state transitions, idempotency handling (`orders.test.ts`).
+- **Payments**: Mock payment provider logic, concurrency safety, state transitions (`payments/`).
+- **Quotes**: Quote generation, fee calculation, expiration, and real FX provider (`quotes.test.ts`, `real-fx-provider.test.ts`).
+- **Settlements**: Settlement service logic, state transitions, and live Soroban settlement worker lifecycle (`settlements/`).
+- **Stellar Gateway**: Address validation, asset allowlisting, balance parsing, Horizon/Soroban endpoints (`stellar/`).
+- **Webhooks**: Signature verification and event idempotency (`webhooks.test.ts`).
+
+---
+
+## API Documentation
+
+All API routes are prefixed with `/api/v1`.
 
 | Module | Method | Endpoint | Description | Auth Required |
 |---|---|---|---|---|
-| **Health** | `GET` | `/health` | Service & Stellar Testnet health status | No |
-| **Auth** | `POST` | `/api/v1/auth/register` | User registration | No |
+| **Health** | `GET` | `/health` | Application & Stellar Testnet health status | No |
+| **Auth** | `POST` | `/api/v1/auth/register` | Register new user account | No |
 | **Auth** | `POST` | `/api/v1/auth/login` | Authenticate user & return JWT | No |
-| **Auth** | `POST` | `/api/v1/auth/logout` | End user session | No |
-| **Users** | `GET` | `/api/v1/users/me` | Current authenticated user profile | Yes |
-| **Wallets** | `POST` | `/api/v1/wallets` | Register Stellar wallet public key | Yes |
-| **Wallets** | `GET` | `/api/v1/wallets` | List user wallets | Yes |
-| **Wallets** | `DELETE` | `/api/v1/wallets/:id` | Delete user wallet | Yes |
-| **Quotes** | `POST` / `GET` | `/api/v1/quotes` | Generate FX quote & fee calculation | Optional |
-| **Quotes** | `GET` | `/api/v1/quotes/:id` | Fetch quote details | Optional |
-| **Orders** | `POST` | `/api/v1/orders` | Create order (with `Idempotency-Key`) | Yes |
+| **Auth** | `POST` | `/api/v1/auth/logout` | End authenticated session | No |
+| **Users** | `GET` | `/api/v1/users/me` | Retrieve profile of authenticated user | Yes |
+| **Wallets** | `POST` | `/api/v1/wallets` | Register public Stellar wallet address | Yes |
+| **Wallets** | `GET` | `/api/v1/wallets` | List user registered wallets | Yes |
+| **Wallets** | `DELETE` | `/api/v1/wallets/:id` | Unlink registered wallet | Yes |
+| **Quotes** | `POST` | `/api/v1/quotes` | Create FX quote & calculate fees | Optional |
+| **Quotes** | `GET` | `/api/v1/quotes` | List generated FX quotes | Optional |
+| **Quotes** | `GET` | `/api/v1/quotes/:id` | Fetch specific quote details | Optional |
+| **Orders** | `POST` | `/api/v1/orders` | Create order (requires `Idempotency-Key`) | Yes |
 | **Orders** | `GET` | `/api/v1/orders` | List user orders | Yes |
-| **Orders** | `GET` | `/api/v1/orders/:id` | Get order details | Yes |
-| **Payments** | `POST` | `/api/v1/payments` | Create payment (with `Idempotency-Key`) | Yes |
-| **Payments** | `GET` | `/api/v1/payments/:id` | Get payment details | Yes |
+| **Orders** | `GET` | `/api/v1/orders/:id` | Get specific order status | Yes |
+| **Payments** | `POST` | `/api/v1/payments` | Create payment (requires `Idempotency-Key`) | Yes |
+| **Payments** | `GET` | `/api/v1/payments/:id` | Retrieve payment details | Yes |
 | **Payments** | `POST` | `/api/v1/payments/:id/verify` | Verify payment status with provider | Yes |
-| **Webhooks** | `POST` | `/api/v1/webhooks/:provider` | Provider webhook endpoint (Signature & Idempotency) | Signature Header |
-| **Transactions** | `GET` | `/api/v1/transactions` | Query user transactions | Yes |
+| **Webhooks** | `POST` | `/api/v1/webhooks/:provider` | Webhook listener (requires `x-webhook-signature`) | Header |
+| **Transactions** | `GET` | `/api/v1/transactions` | Query transaction records | Yes |
 | **Transactions** | `GET` | `/api/v1/transactions/:id` | Get transaction details | Yes |
-| **Audit** | `GET` | `/api/v1/audit` | Query audit logs | Admin / SuperAdmin |
-| **Settlements** | `GET` | `/api/v1/settlements` | List pending settlements | Admin / SuperAdmin |
-| **Settlements** | `GET` | `/api/v1/settlements/:id` | Get settlement details | Yes |
-| **Settlements** | `GET` | `/api/v1/settlements/order/:orderId` | Get settlement by order ID | Yes |
-| **Stellar** | `GET` | `/api/v1/stellar/accounts/:address` | Normalized Stellar account lookup | No |
-| **Stellar** | `GET` | `/api/v1/stellar/accounts/:address/balances` | Normalized Stellar account balances | No |
-| **Stellar** | `GET` | `/api/v1/stellar/transactions/:hash` | Normalized Stellar transaction lookup | No |
+| **Audit** | `GET` | `/api/v1/audit` | Query audit logs | Admin |
+| **Settlements** | `GET` | `/api/v1/settlements` | List pending/completed settlements | Admin |
+| **Settlements** | `GET` | `/api/v1/settlements/:id` | Get settlement record details | Yes |
+| **Settlements** | `GET` | `/api/v1/settlements/order/:orderId` | Get settlement record by Order ID | Yes |
+| **Stellar** | `GET` | `/api/v1/stellar/accounts/:address` | Account details from Horizon RPC | No |
+| **Stellar** | `GET` | `/api/v1/stellar/accounts/:address/balances` | Stellar balance breakdown | No |
+| **Stellar** | `GET` | `/api/v1/stellar/transactions/:hash` | Stellar transaction details | No |
 
 ---
 
----
+## Stellar & Soroban Integration
 
-## Phase 5A & 5B — Live Soroban Testnet Settlement Integration
-
-### Overview & Security Constraints
-Phase 5B extends the Phase 5A settlement foundation by integrating live **Soroban Testnet settlement execution** via `SorobanSettlementExecutor`. The settlement engine builds, simulates, signs, and submits transactions to Soroban smart contracts on Stellar Testnet, polls RPC for transaction finality, and handles reconciliation cleanly.
-
-- **Network Scope**: Stellar Testnet ONLY (`STELLAR_NETWORK=testnet`). Live submission fails closed if network is mainnet, public, production, or unexpected.
-- **Backend Signer Custody**: Testnet settlement signer secret (`STELLAR_SETTLEMENT_SIGNER_SECRET_KEY`) is loaded exclusively from environment variables and is never exposed in logs, audit records, API responses, or database fields.
-- **Pre-Flight Simulation**: Every transaction is simulated via Soroban RPC prior to submission to prevent on-chain failures.
-- **Idempotency Guarantee**: Existing transaction hashes on settlement records prevent duplicate transaction creation on worker retries.
-
-### Database Model (`Settlement`)
-
-```prisma
-model Settlement {
-  id                     String           @id @default(uuid())
-  settlementId           String           @unique @map("settlement_id")
-  orderId                String           @unique @map("order_id")
-  userId                 String           @map("user_id")
-  status                 SettlementStatus @default(PENDING)
-  asset                  String           @map("asset")
-  amount                 Decimal          @db.Decimal(18, 4)
-  source                 String?          @map("source")
-  destination            String?          @map("destination")
-  contractAddress        String?          @map("contract_address")
-  stellarTransactionHash String?          @map("stellar_transaction_hash")
-  stellarLedger          Int?             @map("stellar_ledger")
-  attemptCount           Int              @default(0) @map("attempt_count")
-  lastError              String?          @map("last_error")
-  submittedAt            DateTime?        @map("submitted_at")
-  confirmedAt            DateTime?        @map("confirmed_at")
-  createdAt              DateTime         @default(now()) @map("created_at")
-  updatedAt              DateTime         @updatedAt @map("updated_at")
-}
-```
+### Network & Safety Scope
+- **Network Scope**: Enforced strictly to Stellar Testnet (`STELLAR_NETWORK=testnet`). Live operation halts automatically if configured for Mainnet without authorization.
+- **Soroban Contracts**: Integrates with `SettlementVaultContract` deployed on Soroban Testnet.
+- **Signer Key Safety**: The backend settlement signer secret (`STELLAR_SETTLEMENT_SIGNER_SECRET_KEY`) is stored exclusively in environment variables and is never exposed in logs, database fields, or API responses.
 
 ### Settlement State Machine
 
@@ -203,64 +351,80 @@ SUBMITTED
   └──> REQUIRES_RECONCILIATION
 
 CONFIRMING
-  ├──> COMPLETED
+  ├──> COMPLETED (terminal)
   └──> REQUIRES_RECONCILIATION
 
 COMPLETED (terminal)
 FAILED (terminal)
-REQUIRES_RECONCILIATION (terminal for current phase)
+REQUIRES_RECONCILIATION (terminal)
 ```
 
-### Phase 5B Soroban Settlement Flow
-
-1. **Order Claiming**: `SettlementWorker` queries `SETTLEMENT_PENDING` orders and claims them in `PENDING` status.
-2. **Submitting Transition**: Worker transitions status to `SUBMITTING`.
-3. **Transaction Building & Simulation**:
-   - `SorobanTransactionService` builds Soroban contract invocation (`create_settlement`) on `SettlementVaultContract`.
-   - Simulates transaction via `sorobanClient.simulateTransaction()`.
-   - Assembles simulation footprint and fees into `Transaction`.
-4. **Signing & Submission**:
-   - Signs transaction with `STELLAR_SETTLEMENT_SIGNER_SECRET_KEY`.
-   - Submits to Soroban RPC via `sorobanClient.sendTransaction()`.
-5. **Submitted Transition**:
-   - Persists `stellarTransactionHash` and `submittedAt`.
-   - Transitions status to `SUBMITTED` then `CONFIRMING`.
-6. **Confirmation Polling**:
-   - `SorobanConfirmationService` polls Soroban RPC (`getTransaction`).
-   - Positive on-chain confirmation: transitions status to `COMPLETED`, records `stellarLedger` and `confirmedAt`, and marks the corresponding `Order` as `COMPLETED`.
-   - Timeout / failure: transitions status to `REQUIRES_RECONCILIATION`.
+### Soroban Settlement Execution Flow
+1. **Order Processing**: Orders transitioning to `SETTLEMENT_PENDING` trigger settlement record creation.
+2. **Worker Claiming**: `SettlementWorker` queries pending records and marks them as `SUBMITTING`.
+3. **Simulation**: `SorobanTransactionService` simulates the `create_settlement` transaction via Soroban RPC to verify footprint and fee parameters.
+4. **Signing & Submission**: Transaction is signed with the backend settlement key and submitted to the Soroban RPC endpoint.
+5. **Confirmation Polling**: `SorobanConfirmationService` polls transaction status until finality. Upon confirmation, the settlement and order status update to `COMPLETED`.
 
 ---
 
-## Authentication & Security
+## Contributing
 
-- **Password Hashing**: Passwords are hashed using `bcrypt` with cost factor 10. Plaintext passwords are never logged or stored.
-- **JWT Authentication**: Secured using `Authorization: Bearer <token>`.
-- **Role-Based Access Control (RBAC)**: Support for `USER`, `MERCHANT`, `ADMIN`, `SUPER_ADMIN`.
-- **Non-Custodial Security**: Secret keys (`S...`), seed phrases, card details, CVVs, and provider secrets are strictly rejected across all endpoints.
-- **Security Headers & Rate Limiting**: Enforced via `helmet` and `express-rate-limit`.
-- **Sensitive Data Redaction**: Audit logs automatically redact sensitive fields (`password`, `token`, `secret`, `privateKey`, etc.).
+We welcome contributions! Please follow this workflow:
+
+1. **Fork & Clone** the repository.
+2. **Create a Feature Branch**: `git checkout -b feature/my-feature`
+3. **Install Dependencies**: `npm install`
+4. **Make Your Changes**: Implement clean, well-tested TypeScript code.
+5. **Run Tests**: Ensure all tests pass with `npm test`.
+6. **Run Code Quality Checks**: Execute `npm run type-check` and `npm run lint`.
+7. **Commit Changes**: Follow standard commit conventions (e.g., `feat: add new provider`).
+8. **Open a Pull Request**: Provide a detailed description of your changes and reference any related issues.
+
+Detailed developer guidelines can be found in [docs/contributing.md](file:///home/whiteghost/LuminaRail/luminarail-backend/docs/contributing.md).
 
 ---
 
-## Testing & Quality
+## Good First Contributions
 
-```bash
-# TypeScript type check
-npm run type-check
+If you are looking for places to start contributing, check out these areas:
+- **Unit Tests**: Add unit tests for edge cases in module services (`src/modules/`).
+- **Validation**: Improve Zod request schema error messages for endpoint validation.
+- **Documentation**: Expand API usage examples or inline JSDoc annotations.
+- **Developer Experience**: Improve local seed scripts or Docker setup scripts.
+- **Mock Payment Extension**: Add mock scenario helpers for edge-case payment provider responses.
 
-# ESLint linting
-npm run lint
+---
 
-# Build production bundle
-npm run build
+## Issue Guidelines
 
-# Run Vitest test suite
-npm test
-```
+When opening an issue, please include:
+- **Title**: Short, descriptive summary of the bug or proposal.
+- **Description**: Clear description of the issue or feature request.
+- **Expected Behavior**: What should happen.
+- **Actual Behavior**: What currently happens (with error logs/stack traces if applicable).
+- **Reproduction Steps**: Detailed steps to reproduce the behavior.
+- **Acceptance Criteria**: For feature requests, list explicit criteria for completion.
+
+---
+
+## Security
+
+Security is critical to LuminaRail. Contributors must adhere to the following principles:
+- **Never commit secrets**: No API keys, JWT secrets, database credentials, or private keys (`S...`).
+- **Audit sensitive data**: Ensure sensitive fields remain masked in audit logs and error messages.
+- **Report Security Issues**: See [SECURITY.md](file:///home/whiteghost/LuminaRail/luminarail-backend/SECURITY.md) for vulnerability reporting procedures.
 
 ---
 
 ## License
 
-[MIT License](./LICENSE)
+This project is licensed under the [MIT License](./LICENSE).
+
+---
+
+## Project Status
+
+- **Current Status**: Active Development / Testnet Integration
+- **Network Target**: Stellar Testnet (Soroban RPC)
+- **Production Warning**: This codebase is configured for testnet experimentation and sandbox testing. Do NOT deploy to production without full security audits and mainnet compliance verification.

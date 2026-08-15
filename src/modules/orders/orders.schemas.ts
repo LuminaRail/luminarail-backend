@@ -21,3 +21,9 @@ export const orderIdParamSchema = z.object({
 export const updateOrderStatusSchema = z.object({
   status: z.nativeEnum(OrderStatus),
 });
+
+export const updateOrderWalletSchema = z.object({
+  walletAddress: z.string().refine((val) => StrKey.isValidEd25519PublicKey(val), {
+    message: 'Invalid Stellar wallet address format.',
+  }),
+});

@@ -1,5 +1,6 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { OrderStatus, PaymentStatus, PaymentType, Prisma } from '@prisma/client';
+import { StrKey } from '@stellar/stellar-sdk';
 import { prisma } from '../../db/prisma.js';
 import {
   NotFoundError,
@@ -241,11 +242,15 @@ export class PaymentService {
       });
     }
 
-    // Order State Machine Integration: STOP at SETTLEMENT_PENDING
+    // Order State Machine Integration: Only enter SETTLEMENT_PENDING if valid walletAddress exists
     if (verificationResponse.status === PaymentStatus.SUCCEEDED) {
+      const targetOrder = await prisma.order.findUnique({ where: { id: payment.orderId } });
+      const hasValidWallet =
+        !!targetOrder?.walletAddress && targetOrder.walletAddress.trim() !== '';
+
       await prisma.order.update({
         where: { id: payment.orderId },
-        data: { status: OrderStatus.SETTLEMENT_PENDING },
+        data: { status: hasValidWallet ? OrderStatus.SETTLEMENT_PENDING : OrderStatus.PAYMENT_CONFIRMED },
       });
     } else if (verificationResponse.status === PaymentStatus.FAILED) {
       await prisma.order.update({

@@ -40,7 +40,7 @@ describe('SettlementWorker Foundation Tests', () => {
         destinationAsset: 'USDC',
         sourceAmount: 10000,
         destinationAmount: 6.5,
-        walletAddress: 'GWALLET_WORKER_1',
+        walletAddress: 'GBBD47IF6LWK2P7MDEVSCWR7DPUWV3NY3DTQEVFL4TW4D366A5VJ26CM',
         status: OrderStatus.SETTLEMENT_PENDING,
       },
     });
@@ -54,7 +54,7 @@ describe('SettlementWorker Foundation Tests', () => {
         destinationAsset: 'USDC',
         sourceAmount: 10000,
         destinationAmount: 6.5,
-        walletAddress: 'GWALLET_WORKER_2',
+        walletAddress: 'GBBD47IF6LWK2P7MDEVSCWR7DPUWV3NY3DTQEVFL4TW4D366A5VJ26CM',
         status: OrderStatus.SETTLEMENT_PENDING,
       },
     });
@@ -115,6 +115,7 @@ describe('SettlementWorker Foundation Tests', () => {
         destinationAsset: 'USDC',
         sourceAmount: 2000,
         destinationAmount: 1.3,
+        walletAddress: 'GBBD47IF6LWK2P7MDEVSCWR7DPUWV3NY3DTQEVFL4TW4D366A5VJ26CM',
         status: OrderStatus.SETTLEMENT_PENDING,
       },
     });

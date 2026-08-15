@@ -2,6 +2,10 @@ import { Prisma, QuoteStatus } from '@prisma/client';
 import { prisma } from '../../db/prisma.js';
 import { BadRequestError, NotFoundError } from '../../errors/index.js';
 import { AuditService } from '../audit/audit.service.js';
+import { config } from '../../config/index.js';
+import { QuoteProvider } from './providers/quote-provider.interface.js';
+import { MockQuoteProvider } from './providers/mock-quote.provider.js';
+import { RealFXQuoteProvider } from './providers/real-fx-quote.provider.js';
 
 export interface GenerateQuoteInput {
   sourceCurrency: string;
@@ -10,68 +14,45 @@ export interface GenerateQuoteInput {
   side?: 'source' | 'destination';
 }
 
-// Deterministic Mock Quote Engine (isolated for Phase 1)
-class MockQuoteEngine {
-  private static MOCK_RATES: Record<string, number> = {
-    'NGN_USDC': 0.00066667, // 1 NGN ~ 0.00066667 USDC (1500 NGN/USDC)
-    'USDC_NGN': 1500,       // 1 USDC ~ 1500 NGN
-    'USD_NGN': 1500,
-    'NGN_USD': 0.00066667,
-    'XLM_NGN': 150,
-    'NGN_XLM': 0.00666667,
-    'USDC_XLM': 10,
-    'XLM_USDC': 0.1,
-  };
-
-  static calculate(source: string, dest: string, amount: number, side: 'source' | 'destination') {
-    const pairKey = `${source}_${dest}`;
-    let rate = this.MOCK_RATES[pairKey];
-
-    if (!rate) {
-      if (source === dest) {
-        rate = 1.0;
-      } else {
-        rate = 1.0; // Fallback mock rate
-      }
-    }
-
-    const feePercentage = 0.01; // 1% mock fee
-    let sourceAmt: number;
-    let destAmt: number;
-    let feeAmt: number;
-
-    if (side === 'source') {
-      sourceAmt = amount;
-      feeAmt = sourceAmt * feePercentage;
-      const netSource = sourceAmt - feeAmt;
-      destAmt = netSource * rate;
-    } else {
-      destAmt = amount;
-      const netSourceNeeded = destAmt / rate;
-      sourceAmt = netSourceNeeded / (1 - feePercentage);
-      feeAmt = sourceAmt * feePercentage;
-    }
-
-    return {
-      exchangeRate: rate,
-      sourceAmount: parseFloat(sourceAmt.toFixed(4)),
-      destinationAmount: parseFloat(destAmt.toFixed(4)),
-      fee: parseFloat(feeAmt.toFixed(4)),
-      provider: 'MOCK_QUOTE_PROVIDER',
-    };
-  }
-}
-
 export class QuoteService {
+  private static activeProvider: QuoteProvider | null = null;
+
+  public static setProvider(provider: QuoteProvider): void {
+    this.activeProvider = provider;
+  }
+
+  public static getProvider(): QuoteProvider {
+    if (this.activeProvider) {
+      return this.activeProvider;
+    }
+
+    // Dependency injection selection logic:
+    // If QUOTE_PROVIDER is set to 'mock' or NODE_ENV is 'test' (and not explicitly overridden to 'real')
+    if (config.quotes.provider === 'mock' || (config.env === 'test' && process.env.QUOTE_PROVIDER !== 'real')) {
+      this.activeProvider = new MockQuoteProvider();
+    } else {
+      this.activeProvider = new RealFXQuoteProvider();
+    }
+
+    return this.activeProvider;
+  }
+
   static async createQuote(input: GenerateQuoteInput, userId?: string, ipAddress?: string) {
-    const calculation = MockQuoteEngine.calculate(
+    if (!input.amount || typeof input.amount !== 'number' || input.amount <= 0 || !isFinite(input.amount) || isNaN(input.amount)) {
+      throw new BadRequestError('Amount must be a positive number');
+    }
+
+    const provider = this.getProvider();
+    const calculation = await provider.calculate(
       input.sourceCurrency,
       input.destinationAsset,
       input.amount,
       input.side || 'source'
     );
 
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minute expiration
+    // Calculate real expiry based on configured duration (default: 30 seconds)
+    const expiryMs = (config.quotes.expirySeconds || 30) * 1000;
+    const expiresAt = new Date(Date.now() + expiryMs);
 
     const quote = await prisma.quote.create({
       data: {
@@ -98,6 +79,10 @@ export class QuoteService {
         destinationAsset: quote.destinationAsset,
         sourceAmount: quote.sourceAmount.toString(),
         destinationAmount: quote.destinationAmount.toString(),
+        exchangeRate: quote.exchangeRate.toString(),
+        fee: quote.fee.toString(),
+        provider: quote.provider,
+        rateTimestamp: calculation.rateTimestamp.toISOString(),
         expiresAt: quote.expiresAt.toISOString(),
       },
       ipAddress,

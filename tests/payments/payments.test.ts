@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { prisma } from '../../src/db/prisma.js';
+import { QuoteService } from '../../src/modules/quotes/quotes.service.js';
+import { MockQuoteProvider } from '../../src/modules/quotes/providers/mock-quote.provider.js';
 
 describe('Payments API Endpoints & Lifecycle', () => {
   const app = createApp();
@@ -15,6 +17,8 @@ describe('Payments API Endpoints & Lifecycle', () => {
   const idempotencyKey = `pay_idemp_${Date.now()}`;
 
   beforeAll(async () => {
+  QuoteService.setProvider(new MockQuoteProvider());  
+
     const r1 = await request(app).post('/api/v1/auth/register').send({
       email: userEmail,
       password: 'Password123!',
@@ -38,7 +42,11 @@ describe('Payments API Endpoints & Lifecycle', () => {
     const oRes = await request(app)
       .post('/api/v1/orders')
       .set('Authorization', `Bearer ${userToken}`)
-      .send({ quoteId, type: 'ON_RAMP' });
+      .send({
+        quoteId,
+        type: 'ON_RAMP',
+        walletAddress: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+      });
 
     orderId = oRes.body.data.id;
   });
@@ -60,6 +68,7 @@ describe('Payments API Endpoints & Lifecycle', () => {
       });
       await prisma.payment.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.transaction.deleteMany({ where: { userId: { in: userIds } } });
+      await prisma.settlement.deleteMany({ where: { order: { userId: { in: userIds } } } });
       await prisma.order.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.auditLog.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.user.deleteMany({ where: { id: { in: userIds } } });

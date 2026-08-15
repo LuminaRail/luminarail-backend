@@ -40,7 +40,7 @@ describe('SettlementService Unit & Integration Tests', () => {
         destinationAsset: 'USDC',
         sourceAmount: 50000,
         destinationAmount: 32.5,
-        walletAddress: 'GACCOUNT_TEST_SETTLEMENT_ADDRESS_123',
+        walletAddress: 'GBBD47IF6LWK2P7MDEVSCWR7DPUWV3NY3DTQEVFL4TW4D366A5VJ26CM',
         status: OrderStatus.SETTLEMENT_PENDING,
       },
     });
@@ -61,13 +61,25 @@ describe('SettlementService Unit & Integration Tests', () => {
   });
 
   afterAll(async () => {
-    if (userId) {
-      await prisma.settlement.deleteMany({ where: { userId } });
-      await prisma.auditLog.deleteMany({ where: { userId } });
-      await prisma.order.deleteMany({ where: { userId } });
-      await prisma.user.deleteMany({ where: { id: userId } });
+  if (userId) {
+    const orders = await prisma.order.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+
+    const orderIds = orders.map((order) => order.id);
+
+    if (orderIds.length > 0) {
+      await prisma.settlement.deleteMany({
+        where: { orderId: { in: orderIds } },
+      });
     }
-  });
+
+    await prisma.auditLog.deleteMany({ where: { userId } });
+    await prisma.order.deleteMany({ where: { userId } });
+    await prisma.user.deleteMany({ where: { id: userId } });
+  }
+});
 
   it('should create settlement for order in SETTLEMENT_PENDING with server-derived amount', async () => {
     const result = await SettlementService.createSettlementForOrder(pendingOrderId, userId);
@@ -78,7 +90,7 @@ describe('SettlementService Unit & Integration Tests', () => {
     expect(result.settlement.status).toBe(SettlementStatus.PENDING);
     expect(Number(result.settlement.amount.toString())).toBe(32.5);
     expect(result.settlement.asset).toBe('USDC');
-    expect(result.settlement.destination).toBe('GACCOUNT_TEST_SETTLEMENT_ADDRESS_123');
+    expect(result.settlement.destination).toBe('GBBD47IF6LWK2P7MDEVSCWR7DPUWV3NY3DTQEVFL4TW4D366A5VJ26CM');
 
     // Audit log check
     const audit = await prisma.auditLog.findFirst({
@@ -141,6 +153,7 @@ describe('SettlementService Unit & Integration Tests', () => {
         destinationAsset: 'USDC',
         sourceAmount: 20000,
         destinationAmount: 13,
+        walletAddress: 'GBBD47IF6LWK2P7MDEVSCWR7DPUWV3NY3DTQEVFL4TW4D366A5VJ26CM',
         status: OrderStatus.SETTLEMENT_PENDING,
       },
     });
@@ -184,6 +197,7 @@ describe('SettlementService Unit & Integration Tests', () => {
         destinationAsset: 'USDC',
         sourceAmount: 5000,
         destinationAmount: 3.25,
+        walletAddress: 'GBBD47IF6LWK2P7MDEVSCWR7DPUWV3NY3DTQEVFL4TW4D366A5VJ26CM',
         status: OrderStatus.SETTLEMENT_PENDING,
       },
     });
