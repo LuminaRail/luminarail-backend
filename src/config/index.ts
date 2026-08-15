@@ -60,6 +60,14 @@ export const envSchema = z.object({
 }, {
   message: 'PAYSTACK_SECRET_KEY environment variable is required when NGN_PROVIDER is set to "paystack".',
   path: ['PAYSTACK_SECRET_KEY'],
+}).refine((data) => {
+  if (data.NODE_ENV === 'production' && data.JWT_SECRET === 'dev_secret_change_me_in_production') {
+    return false;
+  }
+  return true;
+}, {
+  message: 'JWT_SECRET environment variable must be set to a secure key in production mode.',
+  path: ['JWT_SECRET'],
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
