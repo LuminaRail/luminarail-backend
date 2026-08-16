@@ -24,7 +24,25 @@ export interface PaystackVerifyResult {
   channel?: string;
   customerEmail?: string;
   paidAt?: string;
-  raw: any;
+  raw: Record<string, unknown>;
+}
+
+interface PaystackInitData {
+  authorization_url?: string;
+  access_code?: string;
+  reference?: string;
+}
+
+interface PaystackVerifyData {
+  id?: number;
+  status?: string;
+  reference?: string;
+  amount?: number;
+  currency?: string;
+  channel?: string;
+  customer?: { email?: string };
+  paid_at?: string;
+  [key: string]: unknown;
 }
 
 export class PaystackClient {
@@ -60,16 +78,16 @@ export class PaystackClient {
         body: JSON.stringify(payload),
       });
 
-      const body: any = await response.json().catch(() => null);
+      const body = (await response.json().catch(() => null)) as { status?: boolean; message?: string; data?: PaystackInitData } | null;
 
-      if (!response.ok || !body || !body.status) {
+      if (!response.ok || !body || !body.status || !body.data) {
         const errorMsg = body?.message || `Paystack initialize request failed with status ${response.status}`;
         throw new ProviderError(`Paystack Transaction Initialization Failed: ${errorMsg}`);
       }
 
       return {
-        authorizationUrl: body.data.authorization_url,
-        accessCode: body.data.access_code,
+        authorizationUrl: body.data.authorization_url || '',
+        accessCode: body.data.access_code || '',
         reference: body.data.reference || input.reference,
       };
     } catch (err) {
@@ -96,9 +114,9 @@ export class PaystackClient {
         },
       });
 
-      const body: any = await response.json().catch(() => null);
+      const body = (await response.json().catch(() => null)) as { status?: boolean; message?: string; data?: PaystackVerifyData } | null;
 
-      if (!response.ok || !body || !body.status) {
+      if (!response.ok || !body || !body.status || !body.data) {
         const errorMsg = body?.message || `Paystack verify request failed with status ${response.status}`;
         throw new ProviderError(`Paystack Transaction Verification Failed: ${errorMsg}`);
       }
@@ -106,15 +124,15 @@ export class PaystackClient {
       const data = body.data;
 
       return {
-        id: data.id,
+        id: data.id || 0,
         status: (data.status || '').toLowerCase(),
-        reference: data.reference,
-        amountInKobo: data.amount,
+        reference: data.reference || reference,
+        amountInKobo: data.amount || 0,
         currency: (data.currency || 'NGN').toUpperCase(),
         channel: data.channel,
         customerEmail: data.customer?.email,
         paidAt: data.paid_at,
-        raw: data,
+        raw: data as Record<string, unknown>,
       };
     } catch (err) {
       if (err instanceof ProviderError || err instanceof BadRequestError) {

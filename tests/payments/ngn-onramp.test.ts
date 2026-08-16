@@ -19,7 +19,11 @@ describe('NGN Fiat On-Ramp Architecture & Payment Rail Integration', () => {
   let userId: string;
   const testWallet = Keypair.random().publicKey();
 
+  let originalNgnProvider: string;
+
   beforeEach(async () => {
+    originalNgnProvider = config.ngnProvider;
+    (config as any).ngnProvider = 'sandbox';
     QuoteService.setProvider(new MockQuoteProvider());
     await prisma.transaction.deleteMany();
     await prisma.settlement.deleteMany();
@@ -48,6 +52,7 @@ describe('NGN Fiat On-Ramp Architecture & Payment Rail Integration', () => {
   });
 
   afterEach(async () => {
+    (config as any).ngnProvider = originalNgnProvider;
     NgnPaymentProvider.clearStore();
   });
 
