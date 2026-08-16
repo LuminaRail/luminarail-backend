@@ -50,7 +50,7 @@ export const envSchema = z.object({
   FX_API_URL: z.string().url('FX_API_URL must be a valid URL').default('https://open.er-api.com/v6/latest/USD'),
   FX_API_KEY: z.string().optional().default(''),
   QUOTE_PROVIDER: z.enum(['real', 'mock']).default('real'),
-  QUOTE_EXPIRY_SECONDS: z.string().transform((val) => parseInt(val, 10)).default('30'),
+  QUOTE_EXPIRY_SECONDS: z.string().transform((val) => parseInt(val, 10)).default('180'),
   QUOTE_FEE_PERCENTAGE: z.string().transform((val) => parseFloat(val)).default('0.01'),
 }).refine((data) => {
   if (data.NGN_PROVIDER === 'paystack' && (!data.PAYSTACK_SECRET_KEY || data.PAYSTACK_SECRET_KEY.trim() === '')) {
