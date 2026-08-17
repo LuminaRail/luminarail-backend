@@ -4,19 +4,27 @@
 
 LuminaRail is an open financial infrastructure connecting Nigerian Naira (NGN) local fiat payment rails directly to the Stellar blockchain. It enables seamless NGN deposits, live foreign exchange rate conversions, and automated settlement of USDC digital dollars to non-custodial Stellar wallets via Soroban smart contracts.
 
+> [!IMPORTANT]
+> **Development/Testnet Notice:**
+> LuminaRail currently uses Paystack Test Mode and Stellar Testnet/Soroban Testnet for development and demonstration. Production NGN deposits and production Stellar settlement require production provider credentials, compliance/KYB, and production network configuration.
+
 ---
 
-## Core Flow
+## NGN Deposit & Settlement Flow
 
-1. **NGN Deposit Request**: User initiates an NGN deposit or USDC purchase request via the LuminaRail application interface.
-2. **FX Quote Generation**: LuminaRail queries live FX rates (`RealFxQuoteProvider`) to generate a binding NGN → USDC quote with fee calculation and expiration timestamp.
-3. **ON_RAMP Order Creation**: User creates an order (`POST /api/v1/orders`) linked to the quote, specifying idempotency keys.
-4. **Paystack Payment Initialization**: LuminaRail initializes an NGN transaction via Paystack (`POST /api/v1/payments`), returning a hosted checkout URL and reference.
-5. **Paystack Payment**: User completes payment via Paystack's checkout page (Card, Bank Transfer, or USSD).
-6. **Payment Verification & Webhook**: Paystack sends a signed webhook payload (`POST /api/v1/webhooks/paystack`) with HMAC-SHA512 verification. Backend re-verifies transaction status directly with Paystack API.
-7. **Stellar Wallet Association**: User connects their Stellar wallet (Freighter / Lobstr) and associates their public address (`G...`) with the order (`PATCH /api/v1/orders/:id/wallet`).
-8. **Soroban Settlement Execution**: Background `SettlementWorker` processes `SETTLEMENT_PENDING` orders, simulating and executing Soroban smart contract operations to transfer USDC to the user's Stellar wallet.
-9. **USDC Received**: User receives USDC in their Stellar wallet with complete on-chain transaction hash verification.
+```
+User
+  → quote
+  → order
+  → payment initialization
+  → Paystack checkout
+  → Paystack confirmation/webhook
+  → payment SUCCEEDED
+  → Stellar wallet association
+  → settlement pending
+  → Soroban settlement
+  → USDC destination wallet
+```
 
 ---
 
