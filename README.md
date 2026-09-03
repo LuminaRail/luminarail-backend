@@ -1,4 +1,9 @@
-# LuminaRail
+# LuminaRail Backend (`luminarail-backend`)
+
+[![CI Status](https://github.com/LuminaRail/luminarail-backend/workflows/Backend%20CI/badge.svg)](https://github.com/LuminaRail/luminarail-backend/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D20.x-green.svg)](https://nodejs.org)
+[![Stellar Network](https://img.shields.io/badge/Network-Stellar%20Testnet-purple.svg)](https://stellar.org)
 
 > **NGN → USDC On-Ramp and Stellar/Soroban Settlement Platform**
 
@@ -7,6 +12,27 @@ LuminaRail is an open financial infrastructure connecting Nigerian Naira (NGN) l
 > [!IMPORTANT]
 > **Development/Testnet Notice:**
 > LuminaRail currently uses Paystack Test Mode and Stellar Testnet/Soroban Testnet for development and demonstration. Production NGN deposits and production Stellar settlement require production provider credentials, compliance/KYB, and production network configuration.
+
+---
+
+## Repository Cross-References
+
+LuminaRail is organized across three modular open-source repositories:
+- **`luminarail-backend`** (This repository): Node.js / Express API service handling Paystack webhooks, order state machines, FX rates, and Soroban settlement workers.
+- **[`luminarail-contracts`](../luminarail-contracts)**: Soroban smart contracts written in Rust (`escrow`, `settlement_vault`, `fee_manager`).
+- **[`luminarail-frontend`](../luminarail-frontend)**: Next.js 16 UI application for merchants, dashboard analytics, order tracking, and wallet integration.
+
+---
+
+## Production vs. Sandbox Integrations
+
+| Subsystem / Provider | Development / Sandbox Implementation | Production Requirements |
+| :--- | :--- | :--- |
+| **Fiat Payment Processor** | Paystack Test Mode (`sk_test_*` / `pk_test_*`) | Approved Paystack Merchant Production Account (`sk_live_*`) |
+| **Stellar Blockchain Network** | **Stellar Testnet** (Horizon RPC & Soroban RPC) | Stellar Mainnet Horizon RPC & Mainnet Soroban RPC endpoints |
+| **FX Rate Provider** | `MockQuoteProvider` / `RealFxQuoteProvider` | Institution-grade FX data stream API (e.g. Bloomberg / Refinitiv) |
+| **Settlement Signer** | Dedicated Testnet secret key (`S...`) | Hardware Security Module (HSM) or AWS KMS / GCP KMS key management |
+| **Database Tier** | PostgreSQL 16 (Local / Docker Compose container) | Managed HA PostgreSQL (AWS RDS / GCP Cloud SQL) with automated backups |
 
 ---
 

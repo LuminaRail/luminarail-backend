@@ -1,0 +1,30 @@
+name: Feature Request
+description: Suggest a feature or API improvement for LuminaRail Backend
+title: "[FEATURE]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: Thank you for suggesting a feature for `luminarail-backend`!
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Describe the problem or limitation this feature addresses.
+      placeholder: e.g. Settlement worker polling interval is currently fixed...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the backend endpoint, service, or worker enhancement you'd like.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative designs considered.
+    validations:
+      required: false

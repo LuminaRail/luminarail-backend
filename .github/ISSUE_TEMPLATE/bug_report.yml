@@ -1,0 +1,45 @@
+name: Bug Report
+description: Report a bug or error in LuminaRail Backend API
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thank you for reporting an issue in `luminarail-backend`!
+  - type: textarea
+    id: summary
+    attributes:
+      label: Bug Description
+      description: Clear description of the bug or unexpected API behavior.
+      placeholder: e.g. Paystack webhook verification fails on specific signature header...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the API error or test failure.
+      placeholder: |
+        1. Run `npm test` or start dev server
+        2. Send POST request to `/api/v1/orders`
+        3. Observe 500 error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: Expected API response or state transition.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Details
+      description: Node.js version, PostgreSQL version, OS, etc.
+      placeholder: |
+        - Node version: 20.15.0
+        - PostgreSQL: 16.0
+        - Database: Local Prisma container
+    validations:
+      required: false
