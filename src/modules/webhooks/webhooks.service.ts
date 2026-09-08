@@ -1,16 +1,17 @@
-import { OrderStatus, PaymentStatus, Prisma } from '@prisma/client';
+import { OrderStatus, PaymentStatus, Prisma, LiquidityReservationStatus } from '@prisma/client';
 import { prisma } from '../../db/prisma.js';
 import { WebhookVerificationError } from '../../errors/index.js';
 import { PaymentProviderRegistry } from '../providers/provider.registry.js';
 import { PaymentStateMachine } from '../payments/payment.state-machine.js';
 import { AuditService } from '../audit/audit.service.js';
+import { LiquidityService } from '../liquidity/liquidity.service.js';
 
 export class WebhookService {
   public static async processWebhook(
     providerName: string,
     headers: Record<string, string | string[] | undefined>,
     body: any,
-    rawBody: string,
+    rawBody: Buffer | string,
     ipAddress?: string
   ) {
     const provider = PaymentProviderRegistry.get(providerName);
@@ -33,7 +34,7 @@ export class WebhookService {
     }
 
     // Step 2: Parse Webhook Event
-    const parsedEvent = provider.parseWebhookEvent(headers, body);
+    const parsedEvent = provider.parseWebhookEvent(headers, body, rawBody);
 
     // Step 3: Atomic Transactional Event Claiming
     let webhookEventRecord;
@@ -117,20 +118,53 @@ export class WebhookService {
               data: { status: parsedEvent.status },
             });
 
-            // Order State Machine Update: Enter SETTLEMENT_PENDING only if walletAddress exists
+            // Order State Machine Update: Enter SETTLEMENT_PENDING only if walletAddress exists & order not already advanced/terminal
             if (parsedEvent.status === PaymentStatus.SUCCEEDED) {
-              const targetOrder = await tx.order.findUnique({ where: { id: payment.orderId } });
-              const hasValidWallet = !!targetOrder?.walletAddress && targetOrder.walletAddress.trim() !== '';
+              await LiquidityService.confirmReservation(payment.orderId);
 
-              await tx.order.update({
-                where: { id: payment.orderId },
-                data: { status: hasValidWallet ? OrderStatus.SETTLEMENT_PENDING : OrderStatus.PAYMENT_CONFIRMED },
-              });
+              const targetOrder = await tx.order.findUnique({ where: { id: payment.orderId } });
+              if (targetOrder) {
+                const isAlreadyCompletedOrAdvanced =
+                  targetOrder.status === OrderStatus.COMPLETED ||
+                  targetOrder.status === OrderStatus.SETTLEMENT_COMPLETED ||
+                  targetOrder.status === OrderStatus.SETTLEMENT_PENDING ||
+                  targetOrder.status === OrderStatus.CANCELLED ||
+                  targetOrder.status === OrderStatus.REFUNDED;
+
+                if (!isAlreadyCompletedOrAdvanced) {
+                  const hasValidWallet =
+                    !!targetOrder.walletAddress && targetOrder.walletAddress.trim() !== '';
+                  await tx.order.update({
+                    where: { id: payment.orderId },
+                    data: {
+                      status: hasValidWallet
+                        ? OrderStatus.SETTLEMENT_PENDING
+                        : OrderStatus.PAYMENT_CONFIRMED,
+                    },
+                  });
+                }
+              }
             } else if (parsedEvent.status === PaymentStatus.FAILED) {
-              await tx.order.update({
-                where: { id: payment.orderId },
-                data: { status: OrderStatus.FAILED },
-              });
+              await LiquidityService.releaseReservation(
+                payment.orderId,
+                LiquidityReservationStatus.CANCELLED_RELEASED
+              );
+
+              const targetOrder = await tx.order.findUnique({ where: { id: payment.orderId } });
+              if (targetOrder) {
+                const isAlreadyCompletedOrAdvanced =
+                  targetOrder.status === OrderStatus.COMPLETED ||
+                  targetOrder.status === OrderStatus.SETTLEMENT_COMPLETED ||
+                  targetOrder.status === OrderStatus.CANCELLED ||
+                  targetOrder.status === OrderStatus.REFUNDED;
+
+                if (!isAlreadyCompletedOrAdvanced) {
+                  await tx.order.update({
+                    where: { id: payment.orderId },
+                    data: { status: OrderStatus.FAILED },
+                  });
+                }
+              }
             }
           }
         });

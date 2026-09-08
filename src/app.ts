@@ -17,6 +17,7 @@ import { settlementsRouter } from './modules/settlements/index.js';
 import { merchantsRouter } from './modules/merchants/index.js';
 import { webhooksRouter } from './modules/webhooks/index.js';
 import { auditRouter } from './modules/audit/index.js';
+import { liquidityRouter } from './modules/liquidity/index.js';
 import { stellarRouter } from './stellar/routes/index.js';
 
 export function createApp(): Express {
@@ -24,7 +25,13 @@ export function createApp(): Express {
 
   app.use(helmet());
   app.use(cors());
-  app.use(express.json());
+  app.use(
+    express.json({
+      verify: (req, _res, buf) => {
+        (req as Express.Request).rawBody = buf;
+      },
+    })
+  );
 
   // Rate Limiting
   const limiter = rateLimit({
@@ -85,6 +92,7 @@ export function createApp(): Express {
   api.use('/merchants', merchantsRouter);
   api.use('/webhooks', webhooksRouter);
   api.use('/audit', auditRouter);
+  api.use('/liquidity', liquidityRouter);
   api.use('/stellar', stellarRouter);
 
   app.use(config.apiPrefix, api);

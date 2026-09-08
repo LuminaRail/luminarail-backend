@@ -1,8 +1,10 @@
-import { OrderStatus, OrderType, TransactionType, TransactionStatus } from '@prisma/client';
+import { OrderStatus, OrderType, TransactionType, TransactionStatus, QuoteStatus } from '@prisma/client';
 import { prisma } from '../../db/prisma.js';
 import { ConflictError, NotFoundError, ForbiddenError, BadRequestError } from '../../errors/index.js';
 import { QuoteService } from '../quotes/quotes.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { LiquidityService } from '../liquidity/liquidity.service.js';
+import { config } from '../../config/index.js';
 
 export interface CreateOrderDTO {
   quoteId: string;
@@ -23,6 +25,7 @@ export class OrderService {
         include: {
           quote: true,
           transactions: true,
+          reservation: true,
         },
       });
 
@@ -31,11 +34,29 @@ export class OrderService {
       }
     }
 
-    // Step 2: Validate and Consume Quote
-    const quote = await QuoteService.validateAndUseQuote(dto.quoteId);
+    // Step 2: Validate Quote before starting transaction
+    const quote = await QuoteService.getQuoteById(dto.quoteId);
+    if (quote.status === QuoteStatus.EXPIRED || new Date() > quote.expiresAt) {
+      throw new BadRequestError('Quote has expired.');
+    }
+    if (quote.status === QuoteStatus.USED) {
+      throw new BadRequestError('Quote has already been used.');
+    }
+    if (quote.status === QuoteStatus.CANCELLED) {
+      throw new BadRequestError('Quote has been cancelled.');
+    }
 
-    // Step 3: Create Order in DB
+    // Step 3: Ensure LiquidityPool exists for asset
+    const pool = await LiquidityService.getPool(quote.destinationAsset, config.stellar.network);
+
+    // Step 4: Atomic Order Creation & Liquidity Reservation
     const order = await prisma.$transaction(async (tx) => {
+      // Mark Quote as USED within transaction
+      await tx.quote.update({
+        where: { id: quote.id },
+        data: { status: QuoteStatus.USED },
+      });
+
       const newOrder = await tx.order.create({
         data: {
           userId,
@@ -54,6 +75,13 @@ export class OrderService {
         },
       });
 
+      // Atomically reserve pool liquidity for this order (locks pool row with FOR UPDATE)
+      await LiquidityService.reserveForOrderInTx(tx, {
+        poolId: pool.id,
+        orderId: newOrder.id,
+        amount: quote.destinationAmount,
+      });
+
       // Create initial application transaction record
       await tx.transaction.create({
         data: {
@@ -69,7 +97,7 @@ export class OrderService {
       return newOrder;
     });
 
-    // Step 4: Audit Log
+    // Step 5: Audit Log
     await AuditService.log({
       actor: userId,
       userId,
@@ -161,11 +189,19 @@ export class OrderService {
   ) {
     const order = await this.getOrderById(userId, orderId, isAdmin);
 
+    const isAlreadyCompleted =
+      order.status === OrderStatus.COMPLETED ||
+      order.status === OrderStatus.SETTLEMENT_COMPLETED;
+
     const hasSucceededPayment =
       order.payments?.some((p) => p.status === 'SUCCEEDED') ||
       order.status === OrderStatus.PAYMENT_CONFIRMED;
 
-    const newStatus = hasSucceededPayment ? OrderStatus.SETTLEMENT_PENDING : order.status;
+    const newStatus = isAlreadyCompleted
+      ? order.status
+      : hasSucceededPayment
+      ? OrderStatus.SETTLEMENT_PENDING
+      : order.status;
 
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },

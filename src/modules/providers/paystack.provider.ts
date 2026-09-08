@@ -161,30 +161,62 @@ export class PaystackNgnPaymentProvider implements IPaymentProvider {
     }
 
     const signature = Array.isArray(sigHeader) ? sigHeader[0] : sigHeader;
-
-    // Secret Key HMAC SHA512 Verification
-    const secret = this.secretKeyOverride || config.paystack.secretKey || process.env.PAYSTACK_SECRET_KEY;
-    if (secret) {
-      const computed = crypto
-        .createHmac('sha512', secret)
-        .update(typeof rawBody === 'string' ? rawBody : rawBody.toString('utf-8'))
-        .digest('hex');
-      return computed === signature;
+    if (!signature || typeof signature !== 'string') {
+      return false;
     }
 
-    return false;
+    // Secret Key HMAC SHA512 Verification
+    const secret = this.secretKeyOverride || process.env.PAYSTACK_SECRET_KEY || config.paystack.secretKey;
+    if (!secret) {
+      return false;
+    }
+
+    try {
+      const bodyBuffer = typeof rawBody === 'string' ? Buffer.from(rawBody, 'utf-8') : rawBody;
+      const computedHex = crypto
+        .createHmac('sha512', secret)
+        .update(bodyBuffer)
+        .digest('hex');
+
+      const bufComputed = Buffer.from(computedHex, 'utf-8');
+      const bufSignature = Buffer.from(signature, 'utf-8');
+
+      if (bufComputed.length !== bufSignature.length) {
+        return false;
+      }
+
+      return crypto.timingSafeEqual(bufComputed, bufSignature);
+    } catch {
+      return false;
+    }
   }
 
   public parseWebhookEvent(
     headers: Record<string, string | string[] | undefined>,
-    body: any
+    body: any,
+    rawBody?: string | Buffer
   ): WebhookEventPayload {
-    const rawBody = typeof body === 'string' ? body : JSON.stringify(body);
-    if (!this.verifyWebhookSignature(headers, rawBody)) {
+    const signatureBody = rawBody || (typeof body === 'string' ? body : JSON.stringify(body));
+    if (!this.verifyWebhookSignature(headers, signatureBody)) {
       throw new WebhookVerificationError('Invalid Paystack webhook signature');
     }
 
-    const eventId = body?.id || body?.data?.id?.toString() || `evt_pstk_${Date.now()}`;
+    let eventId: string;
+    if (body?.id !== undefined && body?.id !== null && String(body.id).trim() !== '') {
+      eventId = String(body.id);
+    } else if (body?.data?.id !== undefined && body?.data?.id !== null && String(body.data.id).trim() !== '') {
+      eventId = String(body.data.id);
+    } else {
+      const rawType = body?.event || 'charge.success';
+      const rawRef = body?.data?.reference || body?.data?.provider_payment_id || 'unknown_ref';
+      const rawPaidAt = body?.data?.paid_at || body?.data?.createdAt || '';
+      const rawAmount = body?.data?.amount || '';
+
+      const seed = `${rawType}:${rawRef}:${rawPaidAt}:${rawAmount}`;
+      const hash = crypto.createHash('sha256').update(seed).digest('hex').substring(0, 16);
+      eventId = `evt_pstk_${hash}`;
+    }
+
     const eventType = body?.event || 'charge.success';
     const providerPaymentId = body?.data?.reference || body?.data?.provider_payment_id;
 
