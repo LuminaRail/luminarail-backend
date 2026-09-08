@@ -74,5 +74,5 @@ export interface IPaymentProvider {
   createPayout(request: CreatePayoutRequest): Promise<NormalizedPayoutResponse>;
   getPayoutStatus(providerPayoutId: string): Promise<NormalizedPayoutResponse>;
   verifyWebhookSignature(headers: Record<string, string | string[] | undefined>, rawBody: string | Buffer): boolean;
-  parseWebhookEvent(headers: Record<string, string | string[] | undefined>, body: any): WebhookEventPayload;
+  parseWebhookEvent(headers: Record<string, string | string[] | undefined>, body: any, rawBody?: string | Buffer): WebhookEventPayload;
 }

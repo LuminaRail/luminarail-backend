@@ -161,11 +161,19 @@ export class OrderService {
   ) {
     const order = await this.getOrderById(userId, orderId, isAdmin);
 
+    const isAlreadyCompleted =
+      order.status === OrderStatus.COMPLETED ||
+      order.status === OrderStatus.SETTLEMENT_COMPLETED;
+
     const hasSucceededPayment =
       order.payments?.some((p) => p.status === 'SUCCEEDED') ||
       order.status === OrderStatus.PAYMENT_CONFIRMED;
 
-    const newStatus = hasSucceededPayment ? OrderStatus.SETTLEMENT_PENDING : order.status;
+    const newStatus = isAlreadyCompleted
+      ? order.status
+      : hasSucceededPayment
+      ? OrderStatus.SETTLEMENT_PENDING
+      : order.status;
 
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },

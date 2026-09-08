@@ -1,11 +1,16 @@
 import { Router, Request, Response } from 'express';
 import { WebhookService } from './webhooks.service.js';
+import { WebhookVerificationError } from '../../errors/index.js';
 
 export const webhooksRouter = Router();
 
 webhooksRouter.post('/:provider', (req: Request, res: Response, next) => {
   const providerParam = req.params.provider as string;
-  const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+  const rawBody = req.rawBody;
+
+  if (!rawBody || rawBody.length === 0) {
+    return next(new WebhookVerificationError('Raw request body is missing for webhook verification'));
+  }
 
   WebhookService.processWebhook(
     providerParam,

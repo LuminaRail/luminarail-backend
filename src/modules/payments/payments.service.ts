@@ -248,21 +248,46 @@ export class PaymentService {
       });
     }
 
-    // Order State Machine Integration: Only enter SETTLEMENT_PENDING if valid walletAddress exists
+    // Order State Machine Integration: Only enter SETTLEMENT_PENDING if valid walletAddress exists & order not already advanced/terminal
     if (verificationResponse.status === PaymentStatus.SUCCEEDED) {
       const targetOrder = await prisma.order.findUnique({ where: { id: payment.orderId } });
-      const hasValidWallet =
-        !!targetOrder?.walletAddress && targetOrder.walletAddress.trim() !== '';
+      if (targetOrder) {
+        const isAlreadyCompletedOrAdvanced =
+          targetOrder.status === OrderStatus.COMPLETED ||
+          targetOrder.status === OrderStatus.SETTLEMENT_COMPLETED ||
+          targetOrder.status === OrderStatus.SETTLEMENT_PENDING ||
+          targetOrder.status === OrderStatus.CANCELLED ||
+          targetOrder.status === OrderStatus.REFUNDED;
 
-      await prisma.order.update({
-        where: { id: payment.orderId },
-        data: { status: hasValidWallet ? OrderStatus.SETTLEMENT_PENDING : OrderStatus.PAYMENT_CONFIRMED },
-      });
+        if (!isAlreadyCompletedOrAdvanced) {
+          const hasValidWallet =
+            !!targetOrder.walletAddress && targetOrder.walletAddress.trim() !== '';
+          await prisma.order.update({
+            where: { id: payment.orderId },
+            data: {
+              status: hasValidWallet
+                ? OrderStatus.SETTLEMENT_PENDING
+                : OrderStatus.PAYMENT_CONFIRMED,
+            },
+          });
+        }
+      }
     } else if (verificationResponse.status === PaymentStatus.FAILED) {
-      await prisma.order.update({
-        where: { id: payment.orderId },
-        data: { status: OrderStatus.FAILED },
-      });
+      const targetOrder = await prisma.order.findUnique({ where: { id: payment.orderId } });
+      if (targetOrder) {
+        const isAlreadyCompletedOrAdvanced =
+          targetOrder.status === OrderStatus.COMPLETED ||
+          targetOrder.status === OrderStatus.SETTLEMENT_COMPLETED ||
+          targetOrder.status === OrderStatus.CANCELLED ||
+          targetOrder.status === OrderStatus.REFUNDED;
+
+        if (!isAlreadyCompletedOrAdvanced) {
+          await prisma.order.update({
+            where: { id: payment.orderId },
+            data: { status: OrderStatus.FAILED },
+          });
+        }
+      }
     }
 
     const updatedPayment = await prisma.payment.findUniqueOrThrow({

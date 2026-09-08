@@ -24,7 +24,13 @@ export function createApp(): Express {
 
   app.use(helmet());
   app.use(cors());
-  app.use(express.json());
+  app.use(
+    express.json({
+      verify: (req, _res, buf) => {
+        (req as Express.Request).rawBody = buf;
+      },
+    })
+  );
 
   // Rate Limiting
   const limiter = rateLimit({
