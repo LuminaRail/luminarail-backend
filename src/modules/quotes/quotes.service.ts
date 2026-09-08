@@ -2,6 +2,7 @@ import { Prisma, QuoteStatus } from '@prisma/client';
 import { prisma } from '../../db/prisma.js';
 import { BadRequestError, NotFoundError } from '../../errors/index.js';
 import { AuditService } from '../audit/audit.service.js';
+import { LiquidityService } from '../liquidity/liquidity.service.js';
 import { config } from '../../config/index.js';
 import { QuoteProvider } from './providers/quote-provider.interface.js';
 import { MockQuoteProvider } from './providers/mock-quote.provider.js';
@@ -10,7 +11,7 @@ import { RealFXQuoteProvider } from './providers/real-fx-quote.provider.js';
 export interface GenerateQuoteInput {
   sourceCurrency: string;
   destinationAsset: string;
-  amount: number;
+  amount: number | string | Prisma.Decimal;
   side?: 'source' | 'destination';
 }
 
@@ -26,8 +27,6 @@ export class QuoteService {
       return this.activeProvider;
     }
 
-    // Dependency injection selection logic:
-    // If QUOTE_PROVIDER is set to 'mock' or NODE_ENV is 'test' (and not explicitly overridden to 'real')
     if (config.quotes.provider === 'mock' || (config.env === 'test' && process.env.QUOTE_PROVIDER !== 'real')) {
       this.activeProvider = new MockQuoteProvider();
     } else {
@@ -38,30 +37,73 @@ export class QuoteService {
   }
 
   static async createQuote(input: GenerateQuoteInput, userId?: string, ipAddress?: string) {
-    if (!input.amount || typeof input.amount !== 'number' || input.amount <= 0 || !isFinite(input.amount) || isNaN(input.amount)) {
-      throw new BadRequestError('Amount must be a positive number');
+    const rawAmountDec = new Prisma.Decimal(input.amount);
+
+    if (rawAmountDec.isNaN() || !rawAmountDec.isFinite() || rawAmountDec.lte(0)) {
+      throw new BadRequestError('Amount must be a positive number.');
+    }
+
+    // Currency pair validation
+    const sourceCurrency = input.sourceCurrency.toUpperCase();
+    const destinationAsset = input.destinationAsset.toUpperCase();
+
+    const allowedPairs = ['NGN_USDC', 'NGN_USD', 'USDC_NGN', 'USD_NGN', 'NGN_XLM', 'XLM_NGN', 'USDC_XLM', 'XLM_USDC', 'NGN_NGN', 'USDC_USDC'];
+    const pair = `${sourceCurrency}_${destinationAsset}`;
+    if (!allowedPairs.includes(pair)) {
+      throw new BadRequestError(`Unsupported currency pair: ${sourceCurrency} -> ${destinationAsset}`);
+    }
+
+    // Min/Max NGN limit check for NGN source
+    if (sourceCurrency === 'NGN' && (input.side || 'source') === 'source') {
+      if (rawAmountDec.lt(config.quotes.minNgnAmount)) {
+        throw new BadRequestError(`Minimum transaction amount is ${config.quotes.minNgnAmount} NGN.`);
+      }
+      if (rawAmountDec.gt(config.quotes.maxNgnAmount)) {
+        throw new BadRequestError(`Maximum transaction amount is ${config.quotes.maxNgnAmount} NGN.`);
+      }
     }
 
     const provider = this.getProvider();
     const calculation = await provider.calculate(
-      input.sourceCurrency,
-      input.destinationAsset,
-      input.amount,
+      sourceCurrency,
+      destinationAsset,
+      rawAmountDec,
       input.side || 'source'
     );
 
-    // Calculate real expiry based on configured duration (default: 30 seconds)
-    const expiryMs = (config.quotes.expirySeconds || 30) * 1000;
-    const expiresAt = new Date(Date.now() + expiryMs);
+    const destAmountDec = new Prisma.Decimal(calculation.destinationAmount);
+
+    // Check maximum USDC output limit
+    if (destinationAsset === 'USDC' && destAmountDec.gt(config.quotes.maxQuoteUsdcAmount)) {
+      throw new BadRequestError(`Requested output exceeds maximum allowed quote size of ${config.quotes.maxQuoteUsdcAmount} USDC.`);
+    }
+
+    // Check liquidity availability without creating a reservation
+    const availableLiquidity = await LiquidityService.getAvailableLiquidity(
+      destinationAsset,
+      config.stellar.network
+    );
+    const liquidityAvailable = availableLiquidity.gte(destAmountDec);
+
+    // Calculate expiration timestamp (default: 300 seconds)
+    const ttlSeconds = config.quotes.ttlSeconds || config.quotes.expirySeconds || 300;
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
     const quote = await prisma.quote.create({
       data: {
-        sourceCurrency: input.sourceCurrency,
-        destinationAsset: input.destinationAsset,
-        sourceAmount: new Prisma.Decimal(calculation.sourceAmount),
-        destinationAmount: new Prisma.Decimal(calculation.destinationAmount),
-        exchangeRate: new Prisma.Decimal(calculation.exchangeRate),
-        fee: new Prisma.Decimal(calculation.fee),
+        sourceCurrency,
+        destinationAsset,
+        sourceAmount: calculation.sourceAmount,
+        destinationAmount: calculation.destinationAmount,
+        exchangeRate: calculation.exchangeRate,
+        fee: calculation.fee,
+        grossUsdcAmount: calculation.grossUsdcAmount,
+        networkFeeUsdc: calculation.networkFeeUsdc,
+        spread: calculation.spread,
+        baseFxRate: calculation.baseFxRate,
+        rateTimestamp: calculation.rateTimestamp,
+        liquidityAvailable,
+        version: 1,
         provider: calculation.provider,
         status: QuoteStatus.ACTIVE,
         expiresAt,
@@ -81,6 +123,10 @@ export class QuoteService {
         destinationAmount: quote.destinationAmount.toString(),
         exchangeRate: quote.exchangeRate.toString(),
         fee: quote.fee.toString(),
+        grossUsdcAmount: quote.grossUsdcAmount?.toString() ?? null,
+        spread: quote.spread?.toString() ?? null,
+        baseFxRate: quote.baseFxRate?.toString() ?? null,
+        liquidityAvailable: quote.liquidityAvailable,
         provider: quote.provider,
         rateTimestamp: calculation.rateTimestamp.toISOString(),
         expiresAt: quote.expiresAt.toISOString(),
@@ -100,7 +146,7 @@ export class QuoteService {
       throw new NotFoundError('Quote not found.');
     }
 
-    // Check expiration
+    // Automatic expiration transition
     if (quote.status === QuoteStatus.ACTIVE && new Date() > quote.expiresAt) {
       return prisma.quote.update({
         where: { id: quoteId },
@@ -126,7 +172,6 @@ export class QuoteService {
       throw new BadRequestError('Quote has been cancelled.');
     }
 
-    // Mark as USED
     return prisma.quote.update({
       where: { id: quoteId },
       data: { status: QuoteStatus.USED },
