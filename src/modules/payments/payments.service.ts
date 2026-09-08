@@ -1,5 +1,5 @@
 import { Decimal } from '@prisma/client/runtime/library';
-import { OrderStatus, PaymentStatus, PaymentType, Prisma } from '@prisma/client';
+import { OrderStatus, PaymentStatus, PaymentType, Prisma, LiquidityReservationStatus } from '@prisma/client';
 import { StrKey } from '@stellar/stellar-sdk';
 import { prisma } from '../../db/prisma.js';
 import {
@@ -13,6 +13,7 @@ import { PaymentProviderRegistry } from '../providers/provider.registry.js';
 import { PaymentStateMachine } from './payment.state-machine.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CreatePaymentInput } from './payments.schemas.js';
+import { LiquidityService } from '../liquidity/liquidity.service.js';
 
 export class PaymentService {
   public static async createPayment(
@@ -250,6 +251,8 @@ export class PaymentService {
 
     // Order State Machine Integration: Only enter SETTLEMENT_PENDING if valid walletAddress exists & order not already advanced/terminal
     if (verificationResponse.status === PaymentStatus.SUCCEEDED) {
+      await LiquidityService.confirmReservation(payment.orderId);
+
       const targetOrder = await prisma.order.findUnique({ where: { id: payment.orderId } });
       if (targetOrder) {
         const isAlreadyCompletedOrAdvanced =
@@ -273,6 +276,11 @@ export class PaymentService {
         }
       }
     } else if (verificationResponse.status === PaymentStatus.FAILED) {
+      await LiquidityService.releaseReservation(
+        payment.orderId,
+        LiquidityReservationStatus.CANCELLED_RELEASED
+      );
+
       const targetOrder = await prisma.order.findUnique({ where: { id: payment.orderId } });
       if (targetOrder) {
         const isAlreadyCompletedOrAdvanced =

@@ -1,9 +1,10 @@
-import { OrderStatus, PaymentStatus, Prisma } from '@prisma/client';
+import { OrderStatus, PaymentStatus, Prisma, LiquidityReservationStatus } from '@prisma/client';
 import { prisma } from '../../db/prisma.js';
 import { WebhookVerificationError } from '../../errors/index.js';
 import { PaymentProviderRegistry } from '../providers/provider.registry.js';
 import { PaymentStateMachine } from '../payments/payment.state-machine.js';
 import { AuditService } from '../audit/audit.service.js';
+import { LiquidityService } from '../liquidity/liquidity.service.js';
 
 export class WebhookService {
   public static async processWebhook(
@@ -119,6 +120,8 @@ export class WebhookService {
 
             // Order State Machine Update: Enter SETTLEMENT_PENDING only if walletAddress exists & order not already advanced/terminal
             if (parsedEvent.status === PaymentStatus.SUCCEEDED) {
+              await LiquidityService.confirmReservation(payment.orderId);
+
               const targetOrder = await tx.order.findUnique({ where: { id: payment.orderId } });
               if (targetOrder) {
                 const isAlreadyCompletedOrAdvanced =
@@ -142,6 +145,11 @@ export class WebhookService {
                 }
               }
             } else if (parsedEvent.status === PaymentStatus.FAILED) {
+              await LiquidityService.releaseReservation(
+                payment.orderId,
+                LiquidityReservationStatus.CANCELLED_RELEASED
+              );
+
               const targetOrder = await tx.order.findUnique({ where: { id: payment.orderId } });
               if (targetOrder) {
                 const isAlreadyCompletedOrAdvanced =

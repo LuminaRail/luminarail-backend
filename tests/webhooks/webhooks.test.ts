@@ -115,6 +115,7 @@ describe('Webhooks API & Signature Verification', () => {
       await prisma.payment.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.transaction.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.settlement.deleteMany({ where: { order: { userId: { in: userIds } } } });
+      await prisma.liquidityReservation.deleteMany({ where: { order: { userId: { in: userIds } } } });
       await prisma.order.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.auditLog.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.user.deleteMany({ where: { id: { in: userIds } } });

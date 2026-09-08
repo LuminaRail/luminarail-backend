@@ -49,6 +49,7 @@ describe('Orders & Idempotency API Endpoints', () => {
     const userIds = users.map((u) => u.id);
 
     if (userIds.length > 0) {
+      await prisma.liquidityReservation.deleteMany({});
       await prisma.transaction.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.order.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.auditLog.deleteMany({ where: { userId: { in: userIds } } });

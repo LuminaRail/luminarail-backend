@@ -11,6 +11,7 @@ import {
 import { SettlementStateMachine } from './settlements.state-machine.js';
 import { AuditService } from '../audit/audit.service.js';
 import { config } from '../../config/index.js';
+import { LiquidityService } from '../liquidity/liquidity.service.js';
 
 export class SettlementService {
   public static async createSettlementForOrder(
@@ -291,6 +292,12 @@ export class SettlementService {
 
       return { updatedSettlement };
     });
+
+    await LiquidityService.consumeReservation(
+      updatedSettlement.orderId,
+      updatedSettlement.settlementId,
+      updatedSettlement.stellarTransactionHash || undefined
+    );
 
     await AuditService.log({
       actor: 'system',

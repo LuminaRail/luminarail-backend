@@ -29,6 +29,7 @@ describe('NGN Fiat On-Ramp Architecture & Payment Rail Integration', () => {
     await prisma.settlement.deleteMany();
     await prisma.providerTransaction.deleteMany();
     await prisma.payment.deleteMany();
+    await prisma.liquidityReservation.deleteMany();
     await prisma.order.deleteMany();
     await prisma.quote.deleteMany();
     await prisma.webhookEvent.deleteMany();

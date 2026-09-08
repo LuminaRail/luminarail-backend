@@ -47,6 +47,22 @@ enum OrderStatus {
   FAILED
   CANCELLED
   REFUNDED
+  EXPIRED
+}
+
+enum LiquidityReservationStatus {
+  RESERVED
+  CONFIRMED
+  CONSUMED
+  EXPIRED_RELEASED
+  CANCELLED_RELEASED
+}
+
+enum TreasuryTransactionType {
+  REPLENISHMENT
+  SETTLEMENT_PAYOUT
+  MANUAL_ADJUSTMENT
+  FEE_COLLECTION
 }
 
 enum PaymentType {
@@ -192,6 +208,7 @@ model Order {
   payments          Payment[]
   settlements       Settlement[]
   transactions      Transaction[]
+  reservation       LiquidityReservation?
 
   @@map("orders")
 }
@@ -385,4 +402,49 @@ model Notification {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("notifications")
+}
+
+model LiquidityPool {
+  id               String                 @id @default(uuid())
+  asset            String                 @unique
+  network          String                 @default("testnet")
+  totalBalance     Decimal                @map("total_balance") @db.Decimal(18, 7)
+  reservedBalance  Decimal                @map("reserved_balance") @db.Decimal(18, 7)
+  availableBalance Decimal                @map("available_balance") @db.Decimal(18, 7)
+  minThreshold     Decimal                @map("min_threshold") @db.Decimal(18, 7)
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+  reservations     LiquidityReservation[]
+  transactions     TreasuryTransaction[]
+
+  @@map("liquidity_pools")
+}
+
+model LiquidityReservation {
+  id        String                     @id @default(uuid())
+  poolId    String                     @map("pool_id")
+  orderId   String                     @unique @map("order_id")
+  amount    Decimal                    @db.Decimal(18, 7)
+  status    LiquidityReservationStatus @default(RESERVED)
+  expiresAt DateTime                   @map("expires_at")
+  createdAt DateTime                   @default(now()) @map("created_at")
+  updatedAt DateTime                   @updatedAt @map("updated_at")
+  pool      LiquidityPool              @relation(fields: [poolId], references: [id])
+  order     Order                      @relation(fields: [orderId], references: [id])
+
+  @@index([status, expiresAt])
+  @@map("liquidity_reservations")
+}
+
+model TreasuryTransaction {
+  id            String                  @id @default(uuid())
+  poolId        String                  @map("pool_id")
+  type          TreasuryTransactionType
+  amount        Decimal                 @db.Decimal(18, 7)
+  stellarTxHash String?                 @map("stellar_tx_hash")
+  externalRef   String?                 @map("external_ref")
+  createdAt     DateTime                @default(now()) @map("created_at")
+  pool          LiquidityPool           @relation(fields: [poolId], references: [id])
+
+  @@map("treasury_transactions")
 }

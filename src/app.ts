@@ -17,6 +17,7 @@ import { settlementsRouter } from './modules/settlements/index.js';
 import { merchantsRouter } from './modules/merchants/index.js';
 import { webhooksRouter } from './modules/webhooks/index.js';
 import { auditRouter } from './modules/audit/index.js';
+import { liquidityRouter } from './modules/liquidity/index.js';
 import { stellarRouter } from './stellar/routes/index.js';
 
 export function createApp(): Express {
@@ -91,6 +92,7 @@ export function createApp(): Express {
   api.use('/merchants', merchantsRouter);
   api.use('/webhooks', webhooksRouter);
   api.use('/audit', auditRouter);
+  api.use('/liquidity', liquidityRouter);
   api.use('/stellar', stellarRouter);
 
   app.use(config.apiPrefix, api);
