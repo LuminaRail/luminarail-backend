@@ -1,8 +1,17 @@
+import { Prisma } from '@prisma/client';
+
 export interface QuoteCalculationResult {
-  exchangeRate: number;
-  sourceAmount: number;
-  destinationAmount: number;
-  fee: number;
+  sourceCurrency: string;
+  destinationAsset: string;
+  sourceAmount: number | Prisma.Decimal;
+  destinationAmount: number | Prisma.Decimal;
+  grossUsdcAmount: number | Prisma.Decimal;
+  fee: number | Prisma.Decimal;
+  networkFeeUsdc: number | Prisma.Decimal;
+  spread: number | Prisma.Decimal;
+  baseFxRate: number | Prisma.Decimal;
+  appliedFxRate: number | Prisma.Decimal;
+  exchangeRate: number | Prisma.Decimal;
   provider: string;
   rateTimestamp: Date;
 }
@@ -12,7 +21,7 @@ export interface QuoteProvider {
   calculate(
     sourceCurrency: string,
     destinationAsset: string,
-    amount: number,
-    side: 'source' | 'destination'
+    amount: Prisma.Decimal | number | string,
+    side?: 'source' | 'destination'
   ): Promise<QuoteCalculationResult>;
 }

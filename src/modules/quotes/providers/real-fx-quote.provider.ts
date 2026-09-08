@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { QuoteProvider, QuoteCalculationResult } from './quote-provider.interface.js';
 import { config } from '../../../config/index.js';
 import { AppError } from '../../../errors/index.js';
@@ -7,67 +8,105 @@ export class RealFXQuoteProvider implements QuoteProvider {
 
   private readonly apiUrl: string;
   private readonly apiKey?: string;
-  private readonly feePercentage: number;
+  private readonly feePercentage: Prisma.Decimal;
+  private readonly spreadPercentage: Prisma.Decimal;
   private readonly timeoutMs: number;
+  private readonly maxAgeSeconds: number;
 
-  constructor(options?: { apiUrl?: string; apiKey?: string; feePercentage?: number; timeoutMs?: number }) {
+  constructor(options?: {
+    apiUrl?: string;
+    apiKey?: string;
+    feePercentage?: number;
+    spreadPercentage?: number;
+    timeoutMs?: number;
+    maxAgeSeconds?: number;
+  }) {
     this.apiUrl = options?.apiUrl || config.quotes.fxApiUrl || 'https://open.er-api.com/v6/latest/USD';
     this.apiKey = options?.apiKey ?? config.quotes.fxApiKey;
-    this.feePercentage = options?.feePercentage ?? config.quotes.feePercentage ?? 0.01;
+    this.feePercentage = new Prisma.Decimal(options?.feePercentage ?? config.quotes.feePercentage ?? 0.01);
+    this.spreadPercentage = new Prisma.Decimal(options?.spreadPercentage ?? config.quotes.spreadPercentage ?? 0);
     this.timeoutMs = options?.timeoutMs ?? 5000;
+    this.maxAgeSeconds = options?.maxAgeSeconds ?? config.quotes.fxMaxAgeSeconds ?? 300;
   }
 
   async calculate(
     sourceCurrency: string,
     destinationAsset: string,
-    amount: number,
+    amount: Prisma.Decimal | number | string,
     side: 'source' | 'destination' = 'source'
   ): Promise<QuoteCalculationResult> {
-    if (!amount || typeof amount !== 'number' || amount <= 0 || !isFinite(amount) || isNaN(amount)) {
+    const amountDec = new Prisma.Decimal(amount);
+    if (amountDec.isNaN() || !amountDec.isFinite() || amountDec.lte(0)) {
       throw new AppError('Invalid quote amount requested', 400, 'INVALID_AMOUNT');
     }
 
     const { rateNgn, rateTimestamp } = await this.fetchLiveNgnRate();
 
-    let rawRate: number;
+    const rateAgeSeconds = (Date.now() - rateTimestamp.getTime()) / 1000;
+    if (this.maxAgeSeconds > 0 && rateAgeSeconds > this.maxAgeSeconds) {
+      throw new AppError(
+        `FX rate from provider is stale (age: ${Math.round(rateAgeSeconds)}s, max allowed: ${this.maxAgeSeconds}s)`,
+        502,
+        'FX_PROVIDER_STALE_RATE'
+      );
+    }
 
-    // Currency pair mapping: NGN ↔ USDC (treating 1 USDC = 1 USD as business rule)
+    if (rateNgn < 50 || rateNgn > 500000) {
+      throw new AppError('FX rate returned is outside reasonable safety bounds', 502, 'FX_PROVIDER_UNREASONABLE_RATE');
+    }
+
+    let rawRateDec: Prisma.Decimal;
+
     if (sourceCurrency === 'NGN' && (destinationAsset === 'USDC' || destinationAsset === 'USD')) {
-      rawRate = 1 / rateNgn;
+      rawRateDec = new Prisma.Decimal(1).div(new Prisma.Decimal(rateNgn));
     } else if ((sourceCurrency === 'USDC' || sourceCurrency === 'USD') && destinationAsset === 'NGN') {
-      rawRate = rateNgn;
+      rawRateDec = new Prisma.Decimal(rateNgn);
     } else if (sourceCurrency === destinationAsset) {
-      rawRate = 1.0;
+      rawRateDec = new Prisma.Decimal(1);
     } else {
-      // Fallback for cross pairs relative to USD
-      rawRate = 1 / rateNgn;
+      rawRateDec = new Prisma.Decimal(1).div(new Prisma.Decimal(rateNgn));
     }
 
-    if (!rawRate || typeof rawRate !== 'number' || rawRate <= 0 || !isFinite(rawRate) || isNaN(rawRate)) {
-      throw new AppError('Calculated exchange rate is invalid', 502, 'INVALID_EXCHANGE_RATE');
+    if (rawRateDec.isNaN() || !rawRateDec.isFinite() || rawRateDec.lte(0)) {
+      throw new AppError('Calculated exchange rate is invalid or non-positive', 502, 'INVALID_EXCHANGE_RATE');
     }
 
-    let sourceAmt: number;
-    let destAmt: number;
-    let feeAmt: number;
+    const baseFxRate = rawRateDec;
+    const appliedFxRate = baseFxRate.mul(new Prisma.Decimal(1).sub(this.spreadPercentage));
+    const networkFeeUsdc = new Prisma.Decimal(0);
+
+    let sourceAmountDec: Prisma.Decimal;
+    let destinationAmountDec: Prisma.Decimal;
+    let grossUsdcAmountDec: Prisma.Decimal;
+    let feeDec: Prisma.Decimal;
 
     if (side === 'source') {
-      sourceAmt = amount;
-      feeAmt = sourceAmt * this.feePercentage;
-      const netSource = sourceAmt - feeAmt;
-      destAmt = netSource * rawRate;
+      sourceAmountDec = amountDec.toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+      feeDec = sourceAmountDec.mul(this.feePercentage).toDecimalPlaces(4, Prisma.Decimal.ROUND_UP);
+      const netSource = sourceAmountDec.sub(feeDec);
+
+      grossUsdcAmountDec = sourceAmountDec.mul(baseFxRate).toDecimalPlaces(7, Prisma.Decimal.ROUND_DOWN);
+      destinationAmountDec = netSource.mul(appliedFxRate).toDecimalPlaces(7, Prisma.Decimal.ROUND_DOWN);
     } else {
-      destAmt = amount;
-      const netSourceNeeded = destAmt / rawRate;
-      sourceAmt = netSourceNeeded / (1 - this.feePercentage);
-      feeAmt = sourceAmt * this.feePercentage;
+      destinationAmountDec = amountDec.toDecimalPlaces(7, Prisma.Decimal.ROUND_HALF_UP);
+      const netSourceNeeded = destinationAmountDec.div(appliedFxRate);
+      sourceAmountDec = netSourceNeeded.div(new Prisma.Decimal(1).sub(this.feePercentage)).toDecimalPlaces(4, Prisma.Decimal.ROUND_UP);
+      feeDec = sourceAmountDec.mul(this.feePercentage).toDecimalPlaces(4, Prisma.Decimal.ROUND_UP);
+      grossUsdcAmountDec = sourceAmountDec.mul(baseFxRate).toDecimalPlaces(7, Prisma.Decimal.ROUND_DOWN);
     }
 
     return {
-      exchangeRate: parseFloat(rawRate.toFixed(8)),
-      sourceAmount: parseFloat(sourceAmt.toFixed(4)),
-      destinationAmount: parseFloat(destAmt.toFixed(4)),
-      fee: parseFloat(feeAmt.toFixed(4)),
+      sourceCurrency,
+      destinationAsset,
+      sourceAmount: sourceAmountDec.toNumber(),
+      destinationAmount: destinationAmountDec.toNumber(),
+      grossUsdcAmount: grossUsdcAmountDec.toNumber(),
+      fee: feeDec.toNumber(),
+      networkFeeUsdc: networkFeeUsdc.toNumber(),
+      spread: this.spreadPercentage.toNumber(),
+      baseFxRate: baseFxRate.toNumber(),
+      appliedFxRate: appliedFxRate.toNumber(),
+      exchangeRate: parseFloat(appliedFxRate.toFixed(8)),
       provider: this.name,
       rateTimestamp,
     };
@@ -82,14 +121,11 @@ export class RealFXQuoteProvider implements QuoteProvider {
         'Accept': 'application/json',
       };
 
-      let requestUrl = this.apiUrl;
-
-      // Safely apply API key if provided without logging credentials
       if (this.apiKey) {
         headers['Authorization'] = `Bearer ${this.apiKey}`;
       }
 
-      const response = await fetch(requestUrl, {
+      const response = await fetch(this.apiUrl, {
         method: 'GET',
         headers,
         signal: controller.signal,
@@ -118,7 +154,11 @@ export class RealFXQuoteProvider implements QuoteProvider {
 
       let rateTimestamp = new Date();
       if (data.time_last_update_unix && typeof data.time_last_update_unix === 'number') {
-        rateTimestamp = new Date(data.time_last_update_unix * 1000);
+        const parsedTs = new Date(data.time_last_update_unix * 1000);
+        const ageSeconds = (Date.now() - parsedTs.getTime()) / 1000;
+        if (ageSeconds >= 0 && ageSeconds <= 7 * 86400) {
+          rateTimestamp = parsedTs;
+        }
       }
 
       return {

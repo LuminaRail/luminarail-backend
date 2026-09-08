@@ -36,18 +36,22 @@ export class OrderService {
 
     // Step 2: Validate Quote before starting transaction
     const quote = await QuoteService.getQuoteById(dto.quoteId);
-    if (quote.status === QuoteStatus.EXPIRED || new Date() > quote.expiresAt) {
-      throw new BadRequestError('Quote has expired.');
-    }
     if (quote.status === QuoteStatus.USED) {
       throw new BadRequestError('Quote has already been used.');
     }
     if (quote.status === QuoteStatus.CANCELLED) {
       throw new BadRequestError('Quote has been cancelled.');
     }
+    if (quote.status === QuoteStatus.EXPIRED || quote.status !== QuoteStatus.ACTIVE || new Date() > quote.expiresAt) {
+      throw new BadRequestError('Quote has expired.');
+    }
 
-    // Step 3: Ensure LiquidityPool exists for asset
+    // Step 3: Ensure LiquidityPool exists and pre-check available liquidity
     const pool = await LiquidityService.getPool(quote.destinationAsset, config.stellar.network);
+    const availableLiquidity = await LiquidityService.getAvailableLiquidity(quote.destinationAsset, config.stellar.network);
+    if (availableLiquidity.lt(quote.destinationAmount)) {
+      throw new BadRequestError('Insufficient liquidity in pool to satisfy request');
+    }
 
     // Step 4: Atomic Order Creation & Liquidity Reservation
     const order = await prisma.$transaction(async (tx) => {
