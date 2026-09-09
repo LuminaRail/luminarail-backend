@@ -15,6 +15,7 @@ import { OrderStateMachine } from '../orders/orders.state-machine.js';
 import { AuditService } from '../audit/audit.service.js';
 import { LiquidityService } from '../liquidity/liquidity.service.js';
 import { CreateRefundInput } from './refunds.schemas.js';
+import { DistributedLockService } from '../../infrastructure/locks/distributed-lock.service.js';
 
 export class RefundService {
   public static async createRefund(
@@ -189,58 +190,75 @@ export class RefundService {
     actorId = 'system',
     ipAddress?: string
   ) {
-    const refund = await prisma.refund.findUnique({
-      where: { id: refundId },
-      include: { order: true, payment: true },
+    const lockKey = `lock:refund:${refundId}`;
+    const lock = await DistributedLockService.acquire(lockKey, {
+      ttlMs: 20000,
+      workerId: DistributedLockService.getWorkerProcessId(),
     });
 
-    if (!refund) {
-      throw new RefundNotFoundError(refundId);
-    }
+    try {
+      const refund = await prisma.refund.findUnique({
+        where: { id: refundId },
+        include: { order: true, payment: true },
+      });
 
-    if (RefundStateMachine.isTerminal(refund.status)) {
-      return refund;
-    }
+      if (!refund) {
+        throw new RefundNotFoundError(refundId);
+      }
 
-    // PAYSTACK UNKNOWN RESULT SAFETY: If status is PROCESSING and marked ambiguous, DO NOT re-call provider blindly
-    if (refund.status === RefundStatus.PROCESSING) {
-      const metadata = refund.metadata ? JSON.parse(refund.metadata) : {};
-      if (metadata.ambiguousResponse || metadata.ambiguousNetworkFailure) {
+      if (RefundStateMachine.isTerminal(refund.status)) {
         return refund;
       }
-    }
 
-    // Validate & lock state transition PENDING -> PROCESSING
-    RefundStateMachine.validateTransition(refund.status, RefundStatus.PROCESSING);
+      // PAYSTACK UNKNOWN RESULT SAFETY: If status is PROCESSING and marked ambiguous, DO NOT re-call provider blindly
+      if (refund.status === RefundStatus.PROCESSING) {
+        const metadata = refund.metadata ? JSON.parse(refund.metadata) : {};
+        if (metadata.ambiguousResponse || metadata.ambiguousNetworkFailure) {
+          return refund;
+        }
+      }
 
-    const updatedProcessingCount = await prisma.refund.updateMany({
-      where: { id: refund.id, status: refund.status },
-      data: { status: RefundStatus.PROCESSING },
-    });
+      // Verify lock ownership before state modification
+      if (lock && !lock.isOwned()) {
+        throw new Error(`Distributed lock lost for refund ${refundId} prior to provider execution.`);
+      }
 
-    if (updatedProcessingCount.count === 0) {
-      return prisma.refund.findUniqueOrThrow({ where: { id: refund.id } });
-    }
+      // Validate & lock state transition PENDING -> PROCESSING
+      RefundStateMachine.validateTransition(refund.status, RefundStatus.PROCESSING);
 
-    const currentRefund = await prisma.refund.findUniqueOrThrow({
-      where: { id: refund.id },
-      include: { order: true, payment: true },
-    });
+      const updatedProcessingCount = await prisma.refund.updateMany({
+        where: { id: refund.id, status: refund.status },
+        data: { status: RefundStatus.PROCESSING },
+      });
 
-    const paymentProviderName = currentRefund.payment?.provider || 'MOCK';
-    const provider = PaymentProviderRegistry.get(paymentProviderName);
-    const paymentRef = currentRefund.payment?.providerPaymentId || currentRefund.payment?.reference || currentRefund.orderId;
+      if (updatedProcessingCount.count === 0) {
+        return prisma.refund.findUniqueOrThrow({ where: { id: refund.id } });
+      }
 
-    // Call Provider Refund API
-    const providerResponse = await provider.processRefund({
-      refundId: currentRefund.id,
-      orderId: currentRefund.orderId,
-      paymentReference: paymentRef,
-      amount: currentRefund.amount.toString(),
-      currency: currentRefund.currency,
-      reason: currentRefund.reason,
-      idempotencyKey: currentRefund.idempotencyKey,
-    });
+      const currentRefund = await prisma.refund.findUniqueOrThrow({
+        where: { id: refund.id },
+        include: { order: true, payment: true },
+      });
+
+      const paymentProviderName = currentRefund.payment?.provider || 'MOCK';
+      const provider = PaymentProviderRegistry.get(paymentProviderName);
+      const paymentRef = currentRefund.payment?.providerPaymentId || currentRefund.payment?.reference || currentRefund.orderId;
+
+      // Verify lock ownership right before invoking Paystack external API
+      if (lock && !lock.isOwned()) {
+        throw new Error(`Distributed lock lost for refund ${refundId} immediately prior to Paystack API call.`);
+      }
+
+      // Call Provider Refund API
+      const providerResponse = await provider.processRefund({
+        refundId: currentRefund.id,
+        orderId: currentRefund.orderId,
+        paymentReference: paymentRef,
+        amount: currentRefund.amount.toString(),
+        currency: currentRefund.currency,
+        reason: currentRefund.reason,
+        idempotencyKey: currentRefund.idempotencyKey,
+      });
 
     // Handle Provider Outcome
     if (providerResponse.status === RefundStatus.SUCCEEDED) {
@@ -358,6 +376,11 @@ export class RefundService {
       });
 
       return ambiguousRefund;
+    }
+    } finally {
+      if (lock) {
+        await DistributedLockService.release(lock);
+      }
     }
   }
 

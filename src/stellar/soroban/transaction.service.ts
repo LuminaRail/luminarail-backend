@@ -24,6 +24,7 @@ import {
   SignTransactionRequest,
   SignTransactionResponse,
 } from '../signer/index.js';
+import { DistributedLockService } from '../../infrastructure/locks/distributed-lock.service.js';
 
 export function parseSettlementIdToU64(settlementId: string): bigint {
   const numericPart = settlementId.replace(/\D/g, '');
@@ -216,13 +217,69 @@ export class SorobanTransactionService {
 
   /**
    * Orchestrated Settlement Flow (Build -> Policy Validate & Sign -> Submit).
+   * Protected by a per-account sequence lock to prevent txBAD_SEQ collisions across workers.
    */
   public async buildAndSubmitSettlementTransaction(
     params: SubmitSettlementParams,
     customSigner?: ITransactionSigner
   ): Promise<{ transactionHash: string }> {
-    const prepared = await this.buildUnsignedSettlementTransaction(params);
-    const signedResult = await this.signSettlementTransaction(prepared, customSigner);
-    return this.submitSignedSettlementTransaction(signedResult.signedTransactionXdr);
+    assertLiveSettlementTestnetSafety();
+    const identity = await (customSigner || this.transactionSigner).getIdentity();
+    const sequenceLockKey = `lock:stellar:sequence:${identity.publicKey}`;
+
+    const executeUnderLock = async () => {
+      const prepared = await this.buildUnsignedSettlementTransaction(params);
+      const signedResult = await this.signSettlementTransaction(prepared, customSigner);
+
+      // FIX 1 — CRITICAL: Verify parent settlement lock is STILL owned AFTER KMS signing and DIRECTLY BEFORE Stellar RPC broadcast!
+      if (params.parentLock && !params.parentLock.isOwned()) {
+        throw new SorobanSubmissionError(
+          `Parent settlement lock was lost after KMS signing; aborting Soroban RPC submission.`
+        );
+      }
+
+      return this.submitSignedSettlementTransaction(signedResult.signedTransactionXdr);
+    };
+
+    let seqLock = await DistributedLockService.acquire(sequenceLockKey, {
+      ttlMs: 20000,
+      workerId: DistributedLockService.getWorkerProcessId(),
+    });
+
+    if (!seqLock) {
+      const retryStart = Date.now();
+      while (!seqLock && Date.now() - retryStart < 3000) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        seqLock = await DistributedLockService.acquire(sequenceLockKey, {
+          ttlMs: 20000,
+          workerId: DistributedLockService.getWorkerProcessId(),
+        });
+      }
+    }
+
+    const requiresLocks =
+      Boolean(config.redis?.requireDistributedLocks) ||
+      config.env === 'production' ||
+      process.env.NODE_ENV === 'production';
+
+    if (!seqLock) {
+      if (requiresLocks) {
+        throw new SorobanSubmissionError(
+          `Failed to acquire required Stellar sequence lock for key ${sequenceLockKey}`
+        );
+      }
+
+      // Fallback ONLY when distributed locks are explicitly optional (e.g. test environments without Redis)
+      return executeUnderLock();
+    }
+
+    try {
+      if (!seqLock.isOwned()) {
+        throw new SorobanSubmissionError('Stellar sequence lock lost before building transaction.');
+      }
+      return await executeUnderLock();
+    } finally {
+      await DistributedLockService.release(seqLock);
+    }
   }
 }

@@ -4,6 +4,8 @@ import { SettlementService } from '../modules/settlements/settlements.service.js
 import { LiquidityService } from '../modules/liquidity/liquidity.service.js';
 import { SorobanConfirmationService } from '../stellar/soroban/confirmation.service.js';
 import { AuditService } from '../modules/audit/audit.service.js';
+import { DistributedLockService } from '../infrastructure/locks/distributed-lock.service.js';
+import { config } from '../config/index.js';
 
 export interface ReconciliationOptions {
   batchSize?: number;
@@ -32,44 +34,60 @@ export class ReconciliationDaemon {
   public async processReconciliation(
     options: ReconciliationOptions = {}
   ): Promise<ReconciledSettlementResult[]> {
-    const batchSize = options.batchSize || 10;
-    const maxStaleAgeHours = options.maxStaleAgeHours || 24;
-
-    const pendingReconciliation = await prisma.settlement.findMany({
-      where: {
-        status: {
-          in: [
-            SettlementStatus.SUBMITTING,
-            SettlementStatus.SUBMITTED,
-            SettlementStatus.CONFIRMING,
-            SettlementStatus.REQUIRES_RECONCILIATION,
-          ],
-        },
-      },
-      take: batchSize,
-      orderBy: { updatedAt: 'asc' },
+    const sweepLockKey = 'lock:worker:reconciliation-daemon';
+    const sweepLock = await DistributedLockService.acquire(sweepLockKey, {
+      ttlMs: 30000,
+      workerId: DistributedLockService.getWorkerProcessId(),
     });
 
-    const results: ReconciledSettlementResult[] = [];
-
-    for (const settlement of pendingReconciliation) {
-      try {
-        const result = await this.reconcileSingleSettlement(settlement.id, maxStaleAgeHours);
-        results.push(result);
-      } catch (err: unknown) {
-        const errorMsg = err instanceof Error ? err.message : 'Reconciliation execution error';
-        results.push({
-          settlementId: settlement.settlementId,
-          orderId: settlement.orderId,
-          previousStatus: settlement.status,
-          newStatus: settlement.status,
-          reconciled: false,
-          error: errorMsg,
-        });
-      }
+    if (!sweepLock && (config.redis?.requireDistributedLocks || config.env === 'production')) {
+      return []; // Skip sweep if another process holds the reconciliation lock
     }
 
-    return results;
+    try {
+      const batchSize = options.batchSize || 10;
+      const maxStaleAgeHours = options.maxStaleAgeHours || 24;
+
+      const pendingReconciliation = await prisma.settlement.findMany({
+        where: {
+          status: {
+            in: [
+              SettlementStatus.SUBMITTING,
+              SettlementStatus.SUBMITTED,
+              SettlementStatus.CONFIRMING,
+              SettlementStatus.REQUIRES_RECONCILIATION,
+            ],
+          },
+        },
+        take: batchSize,
+        orderBy: { updatedAt: 'asc' },
+      });
+
+      const results: ReconciledSettlementResult[] = [];
+
+      for (const settlement of pendingReconciliation) {
+        try {
+          const result = await this.reconcileSingleSettlement(settlement.id, maxStaleAgeHours);
+          results.push(result);
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : 'Reconciliation execution error';
+          results.push({
+            settlementId: settlement.settlementId,
+            orderId: settlement.orderId,
+            previousStatus: settlement.status,
+            newStatus: settlement.status,
+            reconciled: false,
+            error: errorMsg,
+          });
+        }
+      }
+
+      return results;
+    } finally {
+      if (sweepLock) {
+        await DistributedLockService.release(sweepLock);
+      }
+    }
   }
 
   /**

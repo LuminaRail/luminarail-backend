@@ -5,6 +5,7 @@ import { SettlementExecutor } from '../stellar/settlement.executor.js';
 import { LiveSettlementExecutor } from '../stellar/live-settlement.executor.js';
 import { config } from '../config/index.js';
 import { AuditService } from '../modules/audit/audit.service.js';
+import { DistributedLockService, DistributedLock } from '../infrastructure/locks/distributed-lock.service.js';
 
 export interface ProcessPendingSettlementsOptions {
   batchSize?: number;
@@ -42,69 +43,59 @@ export class SettlementWorker {
       return [];
     }
 
-    const batchSize = options.batchSize || 10;
-    const stopAtSubmitting = options.stopAtSubmitting ?? false;
-
-    const eligibleOrders = await prisma.order.findMany({
-      where: {
-        status: OrderStatus.SETTLEMENT_PENDING,
-        walletAddress: { not: null },
-        OR: [
-          { settlements: { none: {} } },
-          { settlements: { some: { status: SettlementStatus.PENDING } } },
-        ],
-      },
-      take: batchSize,
-      orderBy: { createdAt: 'asc' },
+    const sweepLockKey = 'lock:worker:settlement-sweep';
+    const sweepLock = await DistributedLockService.acquire(sweepLockKey, {
+      ttlMs: 30000,
+      workerId: DistributedLockService.getWorkerProcessId(),
     });
 
-    const results: ProcessedSettlementResult[] = [];
-
-    for (const order of eligibleOrders) {
-      try {
-        const { settlement, isDuplicate } = await SettlementService.createSettlementForOrder(
-          order.id,
-          'system-worker'
-        );
-
-        let finalStatus = settlement.status;
-
-        if (settlement.status === SettlementStatus.PENDING) {
-          const submitting = await SettlementService.markSubmitting(settlement.id);
-          finalStatus = submitting.status;
-
-          if (!stopAtSubmitting) {
-            finalStatus = await this.executeSettlementFlow(submitting);
-          }
-        } else if (!stopAtSubmitting && (
-          settlement.status === SettlementStatus.SUBMITTING ||
-          settlement.status === SettlementStatus.SUBMITTED ||
-          settlement.status === SettlementStatus.CONFIRMING
-        )) {
-          finalStatus = await this.executeSettlementFlow(settlement);
-        }
-
-        results.push({
-          orderId: order.id,
-          settlementId: settlement.settlementId,
-          status: finalStatus,
-          isNew: !isDuplicate,
-        });
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : 'Worker processing error';
-        const existing = await prisma.settlement.findUnique({
-          where: { orderId: order.id },
-        });
-        if (existing && SettlementStateMachineCanTransition(existing.status, SettlementStatus.FAILED)) {
-          await SettlementService.markFailed(
-            existing.id,
-            errorMessage
-          );
-        }
-      }
+    if (!sweepLock && (config.redis?.requireDistributedLocks || config.env === 'production')) {
+      return []; // Skip sweep if another process holds the sweep lock
     }
 
-    return results;
+    try {
+      const batchSize = options.batchSize || 10;
+      const stopAtSubmitting = options.stopAtSubmitting ?? false;
+
+      const eligibleOrders = await prisma.order.findMany({
+        where: {
+          status: OrderStatus.SETTLEMENT_PENDING,
+          walletAddress: { not: null },
+          OR: [
+            { settlements: { none: {} } },
+            { settlements: { some: { status: SettlementStatus.PENDING } } },
+          ],
+        },
+        take: batchSize,
+        orderBy: { createdAt: 'asc' },
+      });
+
+      const results: ProcessedSettlementResult[] = [];
+
+      for (const order of eligibleOrders) {
+        try {
+          const result = await this.processSingleOrder(order.id, { stopAtSubmitting });
+          results.push(result);
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : 'Worker processing error';
+          const existing = await prisma.settlement.findUnique({
+            where: { orderId: order.id },
+          });
+          if (existing && SettlementStateMachineCanTransition(existing.status, SettlementStatus.FAILED)) {
+            await SettlementService.markFailed(
+              existing.id,
+              errorMessage
+            );
+          }
+        }
+      }
+
+      return results;
+    } finally {
+      if (sweepLock) {
+        await DistributedLockService.release(sweepLock);
+      }
+    }
   }
 
   /**
@@ -119,36 +110,94 @@ export class SettlementWorker {
       'system-worker'
     );
 
-    let finalStatus = settlement.status;
+    const lockKey = `lock:settlement:${settlement.id}`;
+    let lock = await DistributedLockService.acquire(lockKey, {
+      ttlMs: 20000,
+      workerId: DistributedLockService.getWorkerProcessId(),
+    });
 
-    if (settlement.status === SettlementStatus.PENDING) {
-      const submitting = await SettlementService.markSubmitting(settlement.id);
-      finalStatus = submitting.status;
-
-      if (!options.stopAtSubmitting) {
-        finalStatus = await this.executeSettlementFlow(submitting);
+    if (!lock) {
+      const startTime = Date.now();
+      while (!lock && Date.now() - startTime < 3000) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        lock = await DistributedLockService.acquire(lockKey, {
+          ttlMs: 20000,
+          workerId: DistributedLockService.getWorkerProcessId(),
+        });
       }
-    } else if (!options.stopAtSubmitting && (
-      settlement.status === SettlementStatus.SUBMITTING ||
-      settlement.status === SettlementStatus.SUBMITTED ||
-      settlement.status === SettlementStatus.CONFIRMING
-    )) {
-      finalStatus = await this.executeSettlementFlow(settlement);
     }
 
-    return {
-      orderId,
-      settlementId: settlement.settlementId,
-      status: finalStatus,
-      isNew: !isDuplicate,
-    };
+    if (!lock) {
+      if (config.redis?.requireDistributedLocks || config.env === 'production') {
+        throw new Error(`Could not acquire distributed settlement lock for ${settlement.id}`);
+      }
+      const current = await prisma.settlement.findUnique({ where: { id: settlement.id } });
+      return {
+        orderId,
+        settlementId: settlement.settlementId,
+        status: current?.status || settlement.status,
+        isNew: !isDuplicate,
+      };
+    }
+
+    try {
+      // Re-read fresh settlement state inside lock to prevent TOCTOU race
+      const currentSettlement = await prisma.settlement.findUnique({
+        where: { id: settlement.id },
+      }) || settlement;
+
+      let finalStatus = currentSettlement.status;
+
+      if (currentSettlement.status === SettlementStatus.PENDING) {
+        const submitting = await SettlementService.markSubmitting(currentSettlement.id);
+        finalStatus = submitting.status;
+
+        if (!options.stopAtSubmitting) {
+          finalStatus = await this.executeSettlementFlow(submitting, lock);
+        }
+      } else if (!options.stopAtSubmitting && (
+        currentSettlement.status === SettlementStatus.SUBMITTING ||
+        currentSettlement.status === SettlementStatus.SUBMITTED ||
+        currentSettlement.status === SettlementStatus.CONFIRMING
+      )) {
+        finalStatus = await this.executeSettlementFlow(currentSettlement, lock);
+      }
+
+      return {
+        orderId,
+        settlementId: settlement.settlementId,
+        status: finalStatus,
+        isNew: !isDuplicate,
+      };
+    } finally {
+      if (lock) {
+        await DistributedLockService.release(lock);
+      }
+    }
   }
 
-  private async executeSettlementFlow(settlement: Settlement): Promise<SettlementStatus> {
-    let current = settlement;
+  private async executeSettlementFlow(
+    settlement: Settlement,
+    lock?: DistributedLock | null
+  ): Promise<SettlementStatus> {
+    // Re-verify database state directly before taking any action
+    const fresh = await prisma.settlement.findUnique({
+      where: { id: settlement.id },
+    });
 
-    // 1. Submit transaction if hash does not exist yet (Idempotency guarantee)
+    if (!fresh) {
+      return settlement.status;
+    }
+
+    let current = fresh;
+
+    // 1. Submit transaction if hash does not exist yet (Idempotency & lock check)
     if (!current.stellarTransactionHash) {
+      // Verify lock ownership is still valid before calling KMS/RPC
+      if (lock && !lock.isOwned()) {
+        throw new Error(`Distributed lock lost for settlement ${current.id} before submission.`);
+      }
+
       const submission = await this.executor.submitSettlement({
         settlementId: current.settlementId,
         orderId: current.orderId,
@@ -157,6 +206,7 @@ export class SettlementWorker {
         amount: current.amount.toString(),
         asset: current.asset,
         contractAddress: current.contractAddress,
+        parentLock: lock || undefined,
       });
 
       if (!submission.submitted || !submission.transactionHash) {

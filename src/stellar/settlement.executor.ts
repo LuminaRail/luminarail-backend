@@ -6,6 +6,7 @@ export interface SubmitSettlementParams {
   amount: string;
   asset: string;
   contractAddress?: string | null;
+  parentLock?: import('../infrastructure/locks/distributed-lock.service.js').DistributedLock | null;
 }
 
 export interface SettlementExecutionResult {
