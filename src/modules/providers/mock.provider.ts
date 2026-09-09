@@ -1,13 +1,15 @@
-import { PaymentStatus } from '@prisma/client';
+import { PaymentStatus, RefundStatus } from '@prisma/client';
 import {
   IPaymentProvider,
   CreatePaymentRequest,
   NormalizedPaymentResponse,
   CreatePayoutRequest,
   NormalizedPayoutResponse,
+  CreateRefundRequest,
+  NormalizedRefundResponse,
   WebhookEventPayload,
 } from './paymentProvider.interface.js';
-import { WebhookVerificationError } from '../../errors/index.js';
+import { WebhookVerificationError, ProviderError } from '../../errors/index.js';
 
 /**
  * MockPaymentProvider — SANDBOX & TEST ONLY PAYMENT PROVIDER
@@ -140,6 +142,43 @@ export class MockPaymentProvider implements IPaymentProvider {
       status: PaymentStatus.SUCCEEDED,
       amount: '0.0000',
       currency: 'NGN',
+    };
+  }
+
+  public async processRefund(request: CreateRefundRequest): Promise<NormalizedRefundResponse> {
+    if (request.reason.includes('simulated_network_error')) {
+      return {
+        provider: this.providerId,
+        providerRefundId: `mock_ambiguous_${Date.now()}`,
+        status: RefundStatus.PROCESSING,
+        amount: request.amount,
+        currency: request.currency,
+        failureReason: 'Paystack Refund Network Error: Connection timed out',
+        metadata: { ambiguousNetworkFailure: true },
+      };
+    }
+
+    if (request.reason.includes('simulated_failure')) {
+      return {
+        provider: this.providerId,
+        providerRefundId: `mock_ref_failed_${Date.now()}`,
+        status: RefundStatus.FAILED,
+        amount: request.amount,
+        currency: request.currency,
+        failureReason: 'Paystack Refund Rejected: Transaction ineligible for refund',
+        metadata: { sandbox: true },
+      };
+    }
+
+    const providerRefundId = `mock_ref_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    return {
+      provider: this.providerId,
+      providerRefundId,
+      status: RefundStatus.SUCCEEDED,
+      amount: request.amount,
+      currency: request.currency,
+      metadata: { reference: request.paymentReference, reason: request.reason, sandbox: true },
+      rawResponse: { providerRefundId, status: 'SUCCEEDED' },
     };
   }
 

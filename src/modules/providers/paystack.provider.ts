@@ -1,11 +1,13 @@
 import crypto from 'crypto';
-import { PaymentStatus } from '@prisma/client';
+import { PaymentStatus, RefundStatus } from '@prisma/client';
 import {
   IPaymentProvider,
   CreatePaymentRequest,
   NormalizedPaymentResponse,
   CreatePayoutRequest,
   NormalizedPayoutResponse,
+  CreateRefundRequest,
+  NormalizedRefundResponse,
   WebhookEventPayload,
   PaymentInstruction,
 } from './paymentProvider.interface.js';
@@ -144,6 +146,68 @@ export class PaystackNgnPaymentProvider implements IPaymentProvider {
       amount: '0.0000',
       currency: 'NGN',
     };
+  }
+
+  public async processRefund(request: CreateRefundRequest): Promise<NormalizedRefundResponse> {
+    const numericAmount = parseFloat(request.amount);
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      throw new BadRequestError(`Invalid refund amount: ${request.amount}`);
+    }
+    const amountInKobo = Math.round(numericAmount * 100);
+
+    try {
+      const refundRes = await this.client.refundTransaction({
+        transaction: request.paymentReference,
+        amountInKobo,
+        merchantNote: request.reason,
+      });
+
+      let status: RefundStatus = RefundStatus.PROCESSING;
+      if (refundRes.status === 'processed' || refundRes.status === 'success' || refundRes.status === 'successful') {
+        status = RefundStatus.SUCCEEDED;
+      } else if (refundRes.status === 'pending' || refundRes.status === 'processing') {
+        status = RefundStatus.PROCESSING;
+      } else if (refundRes.status === 'failed') {
+        status = RefundStatus.FAILED;
+      }
+
+      return {
+        provider: this.providerId,
+        providerRefundId: String(refundRes.id),
+        status,
+        amount: request.amount,
+        currency: request.currency,
+        metadata: {
+          transactionReference: refundRes.transactionReference,
+          processedAt: new Date().toISOString(),
+        },
+        rawResponse: refundRes.raw,
+      };
+    } catch (err) {
+      if (err instanceof ProviderError) {
+        if (err.message.includes('Network Error')) {
+          // Return PROCESSING status with ambiguous error metadata so it is not marked FAILED or retried blindly
+          return {
+            provider: this.providerId,
+            providerRefundId: `ambiguous_${Date.now()}`,
+            status: RefundStatus.PROCESSING,
+            amount: request.amount,
+            currency: request.currency,
+            failureReason: err.message,
+            metadata: { ambiguousNetworkFailure: true },
+          };
+        }
+        return {
+          provider: this.providerId,
+          providerRefundId: `failed_${Date.now()}`,
+          status: RefundStatus.FAILED,
+          amount: request.amount,
+          currency: request.currency,
+          failureReason: err.message,
+        };
+      }
+      throw err;
+    }
   }
 
   public verifyWebhookSignature(

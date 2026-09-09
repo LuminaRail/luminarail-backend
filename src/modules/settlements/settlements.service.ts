@@ -1,4 +1,4 @@
-import { OrderStatus, Prisma, SettlementStatus } from '@prisma/client';
+import { OrderStatus, Prisma, RefundStatus, SettlementStatus } from '@prisma/client';
 import { StrKey } from '@stellar/stellar-sdk';
 import { prisma } from '../../db/prisma.js';
 import {
@@ -40,6 +40,20 @@ export class SettlementService {
     // 3. Strict order status & wallet address validation
     if (order.status !== OrderStatus.SETTLEMENT_PENDING) {
       throw new InvalidOrderStateForSettlementError(order.status);
+    }
+
+    // 3b. Active Refund Assertion
+    const activeRefund = await prisma.refund.findFirst({
+      where: {
+        orderId,
+        status: { in: [RefundStatus.PENDING, RefundStatus.PROCESSING, RefundStatus.SUCCEEDED] },
+      },
+    });
+
+    if (activeRefund) {
+      throw new InvalidOrderStateForSettlementError(
+        `Order ${orderId} has an active or completed refund (Refund status: ${activeRefund.status}).`
+      );
     }
 
     if (!order.walletAddress || order.walletAddress.trim() === '') {

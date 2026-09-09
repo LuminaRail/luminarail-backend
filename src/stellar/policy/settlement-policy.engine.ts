@@ -6,7 +6,7 @@ import {
   scValToNative,
   xdr,
 } from '@stellar/stellar-sdk';
-import { OrderStatus, PaymentStatus, LiquidityReservationStatus, SettlementStatus, Prisma } from '@prisma/client';
+import { OrderStatus, PaymentStatus, LiquidityReservationStatus, SettlementStatus, RefundStatus, Prisma } from '@prisma/client';
 import { prisma } from '../../db/prisma.js';
 import { config } from '../../config/index.js';
 import { stellarConfig } from '../config/index.js';
@@ -135,6 +135,19 @@ export class SettlementPolicyEngine implements ISettlementPolicyEngine {
     if (order.status !== OrderStatus.SETTLEMENT_PENDING) {
       await this.logRejection(context, 'INVALID_ORDER_STATUS', `Order status is ${order.status}, expected SETTLEMENT_PENDING.`);
       throw new SorobanSubmissionError(`Policy Violation: Order state must be SETTLEMENT_PENDING (actual: ${order.status}).`);
+    }
+
+    // Active refund check
+    const activeRefund = await prisma.refund.findFirst({
+      where: {
+        orderId: context.orderId,
+        status: { in: [RefundStatus.PENDING, RefundStatus.PROCESSING, RefundStatus.SUCCEEDED] },
+      },
+    });
+
+    if (activeRefund) {
+      await this.logRejection(context, 'ACTIVE_REFUND_PRESENT', 'Order has an active or completed refund.');
+      throw new SorobanSubmissionError('Policy Violation: Order has an active or completed refund record.');
     }
 
     if (!order.walletAddress || StrKey.isValidEd25519PublicKey(order.walletAddress) === false) {

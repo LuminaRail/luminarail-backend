@@ -143,4 +143,86 @@ export class PaystackClient {
       );
     }
   }
+
+  public async refundTransaction(input: PaystackRefundInput): Promise<PaystackRefundResult> {
+    if (!this.secretKey) {
+      throw new BadRequestError('Paystack API secret key is missing. Set PAYSTACK_SECRET_KEY in environment.');
+    }
+
+    const payload: Record<string, unknown> = {
+      transaction: input.transaction,
+      ...(input.amountInKobo !== undefined ? { amount: Math.round(input.amountInKobo) } : {}),
+      ...(input.merchantNote ? { merchant_note: input.merchantNote } : {}),
+    };
+
+    try {
+      const response = await fetch(`${this.baseUrl}/refund`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.secretKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const body = (await response.json().catch(() => null)) as {
+        status?: boolean;
+        message?: string;
+        data?: {
+          id?: number | string;
+          status?: string;
+          refund_status?: string;
+          transaction?: { reference?: string };
+          amount?: number;
+          [key: string]: unknown;
+        };
+      } | null;
+
+      if (!response.ok || !body) {
+        const errorMsg = body?.message || `Paystack refund request failed with status ${response.status}`;
+        if (response.status >= 400 && response.status < 500) {
+          throw new ProviderError(`Paystack Refund Rejected: ${errorMsg}`);
+        }
+        throw new ProviderError(`Paystack Refund Request Failed: ${errorMsg}`);
+      }
+
+      const data = body.data || {};
+      const statusStr = (
+        data.status ||
+        data.refund_status ||
+        (body.status ? 'processed' : 'failed')
+      )
+        .toString()
+        .toLowerCase();
+
+      return {
+        id: data.id || `ref_${Date.now()}`,
+        status: statusStr,
+        transactionReference: data.transaction?.reference || input.transaction,
+        amountInKobo: data.amount || input.amountInKobo || 0,
+        raw: (data || body) as Record<string, unknown>,
+      };
+    } catch (err) {
+      if (err instanceof ProviderError || err instanceof BadRequestError) {
+        throw err;
+      }
+      throw new ProviderError(
+        `Paystack Refund Network Error: ${err instanceof Error ? err.message : 'Unknown network failure'}`
+      );
+    }
+  }
+}
+
+export interface PaystackRefundInput {
+  transaction: string;
+  amountInKobo?: number;
+  merchantNote?: string;
+}
+
+export interface PaystackRefundResult {
+  id: number | string;
+  status: string;
+  transactionReference: string;
+  amountInKobo: number;
+  raw: Record<string, unknown>;
 }

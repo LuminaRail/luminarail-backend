@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { PaymentService } from './payments.service.js';
 import { createPaymentSchema, paymentIdParamSchema } from './payments.schemas.js';
 import { Role } from '@prisma/client';
+import { RefundService } from '../refunds/refunds.service.js';
 
 export class PaymentController {
   public static async createPayment(req: Request, res: Response) {
@@ -132,6 +133,53 @@ export class PaymentController {
         metadata: metadataParsed,
         createdAt: payment.createdAt,
         updatedAt: payment.updatedAt,
+      },
+    });
+  }
+
+  public static async refundPayment(req: Request, res: Response) {
+    const { id } = paymentIdParamSchema.parse(req.params);
+    const isAdmin = req.user?.role === Role.ADMIN || req.user?.role === Role.SUPER_ADMIN;
+
+    const payment = await PaymentService.getPaymentById(id, req.user!.id, isAdmin);
+    const reason = req.body.reason || 'Admin initiated refund';
+    const amount = req.body.amount;
+    const idempotencyKey = (req.headers['idempotency-key'] || req.headers['x-idempotency-key']) as string | undefined;
+
+    const { refund, isDuplicate } = await RefundService.createRefund(
+      req.user!.id,
+      {
+        orderId: payment.orderId,
+        paymentId: payment.id,
+        amount,
+        reason,
+        idempotencyKey,
+      },
+      isAdmin,
+      idempotencyKey,
+      req.ip
+    );
+
+    let finalRefund = refund;
+    if (!isDuplicate && refund.status === 'PENDING') {
+      finalRefund = await RefundService.executeRefund(refund.id, req.user!.id, req.ip);
+    }
+
+    res.status(isDuplicate ? 200 : 201).json({
+      success: true,
+      isDuplicate,
+      data: {
+        refundId: finalRefund.id,
+        orderId: finalRefund.orderId,
+        paymentId: finalRefund.paymentId,
+        amount: finalRefund.amount.toString(),
+        currency: finalRefund.currency,
+        reason: finalRefund.reason,
+        status: finalRefund.status,
+        paystackRefundId: finalRefund.paystackRefundId,
+        failureReason: finalRefund.failureReason,
+        createdAt: finalRefund.createdAt,
+        completedAt: finalRefund.completedAt,
       },
     });
   }
