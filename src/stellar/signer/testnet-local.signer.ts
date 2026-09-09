@@ -3,10 +3,11 @@ import { config } from '../../config/index.js';
 import { stellarConfig, assertLiveSettlementTestnetSafety } from '../config/index.js';
 import { SorobanSignerConfigError } from '../../errors/index.js';
 import { ITransactionSigner } from './signer.interface.js';
-import { SignerIdentity, SignTransactionRequest, SignTransactionResponse } from './types.js';
+import { SignerIdentity, SignTransactionRequest, SignTransactionResponse, SignerHealthResult } from './types.js';
 import { ISettlementPolicyEngine } from '../policy/policy.interface.js';
 import { SettlementPolicyEngine } from '../policy/settlement-policy.engine.js';
 import { AuditService } from '../../modules/audit/audit.service.js';
+import { KmsTransactionSigner } from './kms-transaction.signer.js';
 
 export class TestnetLocalSigner implements ITransactionSigner {
   private readonly secretKey: string;
@@ -49,6 +50,35 @@ export class TestnetLocalSigner implements ITransactionSigner {
       keyId: 'TESTNET_LOCAL_KEY',
       providerType: 'TESTNET_LOCAL',
       networkPassphrase: stellarConfig.passphrase,
+      expectedSourceAccount: config.stellar.signerPublicKey || this.keypair.publicKey(),
+    };
+  }
+
+  public async verifyReadiness(expectedPublicKey?: string, expectedNetworkPassphrase?: string): Promise<void> {
+    const identity = await this.getIdentity();
+
+    if (expectedNetworkPassphrase && identity.networkPassphrase !== expectedNetworkPassphrase) {
+      throw new SorobanSignerConfigError(
+        `Testnet local signer network mismatch: expected ${expectedNetworkPassphrase}, got ${identity.networkPassphrase}`
+      );
+    }
+
+    const targetExpected = expectedPublicKey || config.stellar.signerPublicKey;
+    if (targetExpected && identity.publicKey !== targetExpected) {
+      throw new SorobanSignerConfigError(
+        `Testnet local signer public key mismatch: expected ${targetExpected}, got ${identity.publicKey}`
+      );
+    }
+  }
+
+  public async healthCheck(): Promise<SignerHealthResult> {
+    const startMs = Date.now();
+    return {
+      healthy: true,
+      providerType: 'TESTNET_LOCAL',
+      publicKey: this.keypair.publicKey(),
+      keyArnOrId: 'TESTNET_LOCAL_KEY',
+      latencyMs: Date.now() - startMs,
     };
   }
 
@@ -101,15 +131,17 @@ export function resolveTransactionSigner(signer?: ITransactionSigner): ITransact
   if (signer) return signer;
 
   const provider = config.stellar.signerProvider || 'testnet_local';
+  const isMainnet = config.stellar.network === 'public' || config.stellar.network === 'mainnet';
 
-  if (config.env === 'production' && provider === 'testnet_local') {
+  if ((config.env === 'production' || isMainnet) && provider === 'testnet_local') {
     throw new SorobanSignerConfigError(
-      'FATAL: Local testnet signer cannot be used in production environment.'
+      'FATAL: Local testnet signer cannot be used in production environment or on public/mainnet networks.'
     );
   }
 
   switch (provider) {
     case 'aws_kms':
+      return new KmsTransactionSigner();
     case 'gcp_kms':
     case 'fireblocks':
       throw new SorobanSignerConfigError(
