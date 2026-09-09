@@ -29,7 +29,7 @@ describe('Settlement State Machine', () => {
     expect(SettlementStateMachine.canTransition(SettlementStatus.COMPLETED, SettlementStatus.PENDING)).toBe(false);
     expect(SettlementStateMachine.canTransition(SettlementStatus.FAILED, SettlementStatus.COMPLETED)).toBe(false);
     expect(SettlementStateMachine.canTransition(SettlementStatus.SUBMITTED, SettlementStatus.SUBMITTING)).toBe(false);
-    expect(SettlementStateMachine.canTransition(SettlementStatus.REQUIRES_RECONCILIATION, SettlementStatus.COMPLETED)).toBe(false);
+    expect(SettlementStateMachine.canTransition(SettlementStatus.COMPLETED, SettlementStatus.SUBMITTING)).toBe(false);
 
     expect(() =>
       SettlementStateMachine.validateTransition(SettlementStatus.COMPLETED, SettlementStatus.PENDING)

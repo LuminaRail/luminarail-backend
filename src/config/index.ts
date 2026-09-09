@@ -58,6 +58,13 @@ export const envSchema = z.object({
   MIN_NGN_AMOUNT: z.string().transform((val) => parseFloat(val)).default('1000'),
   MAX_NGN_AMOUNT: z.string().transform((val) => parseFloat(val)).default('10000000'),
   MAX_QUOTE_USDC_AMOUNT: z.string().transform((val) => parseFloat(val)).default('10000'),
+  STELLAR_SIGNER_PROVIDER: z.enum(['testnet_local', 'aws_kms', 'gcp_kms', 'fireblocks']).default('testnet_local'),
+  MAX_SINGLE_SETTLEMENT_USDC: z.string().transform((val) => parseFloat(val)).default('10000'),
+  MAX_HOURLY_OUTFLOW_USDC: z.string().transform((val) => parseFloat(val)).default('50000'),
+  MAX_DAILY_OUTFLOW_USDC: z.string().transform((val) => parseFloat(val)).default('200000'),
+  MIN_SETTLEMENT_USDC: z.string().transform((val) => parseFloat(val)).default('1'),
+  TREASURY_LOW_BALANCE_THRESHOLD: z.string().transform((val) => parseFloat(val)).default('5000'),
+  EMERGENCY_GLOBAL_PAUSE: z.string().transform((val) => val === 'true' || val === '1').default('false'),
 }).refine((data) => {
   if (data.NGN_PROVIDER === 'paystack' && (!data.PAYSTACK_SECRET_KEY || data.PAYSTACK_SECRET_KEY.trim() === '')) {
     return false;
@@ -105,6 +112,15 @@ export const config = {
     feeManagerContractId: envData.SOROBAN_FEE_MANAGER_CONTRACT_ID,
     signerPublicKey: envData.STELLAR_SETTLEMENT_SIGNER_PUBLIC_KEY,
     signerSecretKey: envData.STELLAR_SETTLEMENT_SIGNER_SECRET_KEY,
+    signerProvider: envData.STELLAR_SIGNER_PROVIDER,
+  },
+  treasury: {
+    maxSingleSettlementUsdc: envData.MAX_SINGLE_SETTLEMENT_USDC,
+    maxHourlyOutflowUsdc: envData.MAX_HOURLY_OUTFLOW_USDC,
+    maxDailyOutflowUsdc: envData.MAX_DAILY_OUTFLOW_USDC,
+    minSettlementUsdc: envData.MIN_SETTLEMENT_USDC,
+    lowBalanceThreshold: envData.TREASURY_LOW_BALANCE_THRESHOLD,
+    emergencyGlobalPause: envData.EMERGENCY_GLOBAL_PAUSE,
   },
   jwt: {
     secret: envData.JWT_SECRET,

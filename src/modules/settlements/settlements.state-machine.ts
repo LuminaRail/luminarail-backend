@@ -9,20 +9,29 @@ export class SettlementStateMachine {
     ],
     [SettlementStatus.SUBMITTING]: [
       SettlementStatus.SUBMITTED,
+      SettlementStatus.PENDING,
       SettlementStatus.FAILED,
       SettlementStatus.REQUIRES_RECONCILIATION,
     ],
     [SettlementStatus.SUBMITTED]: [
       SettlementStatus.CONFIRMING,
+      SettlementStatus.COMPLETED,
+      SettlementStatus.FAILED,
       SettlementStatus.REQUIRES_RECONCILIATION,
     ],
     [SettlementStatus.CONFIRMING]: [
       SettlementStatus.COMPLETED,
+      SettlementStatus.FAILED,
       SettlementStatus.REQUIRES_RECONCILIATION,
     ],
     [SettlementStatus.COMPLETED]: [],
     [SettlementStatus.FAILED]: [],
-    [SettlementStatus.REQUIRES_RECONCILIATION]: [],
+    [SettlementStatus.REQUIRES_RECONCILIATION]: [
+      SettlementStatus.CONFIRMING,
+      SettlementStatus.COMPLETED,
+      SettlementStatus.FAILED,
+      SettlementStatus.PENDING,
+    ],
   };
 
   public static canTransition(from: SettlementStatus, to: SettlementStatus): boolean {

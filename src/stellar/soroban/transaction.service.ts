@@ -2,7 +2,6 @@ import {
   Account,
   Address,
   Contract,
-  Keypair,
   Transaction,
   TransactionBuilder,
   nativeToScVal,
@@ -15,10 +14,12 @@ import { getSorobanClient, StellarSorobanClient } from './client.js';
 import {
   SorobanSimulationError,
   SorobanSubmissionError,
-  SorobanSignerConfigError,
   SorobanContractConfigError,
 } from '../../errors/index.js';
 import { SubmitSettlementParams } from '../settlement.executor.js';
+import { ITransactionSigner } from '../signer/signer.interface.js';
+import { resolveTransactionSigner } from '../signer/testnet-local.signer.js';
+import { AuthorizationPolicyContext, SignTransactionRequest, SignTransactionResponse } from '../signer/types.js';
 
 export function parseSettlementIdToU64(settlementId: string): bigint {
   const numericPart = settlementId.replace(/\D/g, '');
@@ -47,12 +48,21 @@ export function parseAmountToStroops(amount: string): bigint {
   return BigInt(integerPart + decimalPart);
 }
 
+export interface PreparedUnsignedSettlement {
+  unsignedTransactionXdr: string;
+  context: AuthorizationPolicyContext;
+}
+
 export class SorobanTransactionService {
   private clientInstance: StellarSorobanClient | null = null;
+  private signerInstance: ITransactionSigner | null = null;
 
-  constructor(client?: StellarSorobanClient) {
+  constructor(client?: StellarSorobanClient, signer?: ITransactionSigner) {
     if (client) {
       this.clientInstance = client;
+    }
+    if (signer) {
+      this.signerInstance = signer;
     }
   }
 
@@ -63,34 +73,29 @@ export class SorobanTransactionService {
     return this.clientInstance;
   }
 
-  public async buildAndSubmitSettlementTransaction(
+  private get transactionSigner(): ITransactionSigner {
+    if (!this.signerInstance) {
+      this.signerInstance = resolveTransactionSigner();
+    }
+    return this.signerInstance;
+  }
+
+  /**
+   * Step 1: Build & Simulate Unsigned Transaction XDR with context metadata.
+   */
+  public async buildUnsignedSettlementTransaction(
     params: SubmitSettlementParams
-  ): Promise<{ transactionHash: string }> {
-    // 1. Enforce Testnet safety guard
+  ): Promise<PreparedUnsignedSettlement> {
     assertLiveSettlementTestnetSafety();
 
-    // 2. Validate contract configuration
     const contractId = params.contractAddress || config.stellar.settlementVaultContractId;
     if (!contractId || contractId.trim() === '') {
       throw new SorobanContractConfigError('Soroban Settlement Vault Contract ID is not configured.');
     }
 
-    // 3. Validate signer configuration
-    const secretKey = config.stellar.signerSecretKey;
-    if (!secretKey) {
-      throw new SorobanSignerConfigError('STELLAR_SETTLEMENT_SIGNER_SECRET_KEY is not configured.');
-    }
+    const identity = await this.transactionSigner.getIdentity();
+    const signerPublicKey = identity.publicKey;
 
-    const signerKeypair = Keypair.fromSecret(secretKey);
-    const signerPublicKey = config.stellar.signerPublicKey || signerKeypair.publicKey();
-
-    if (config.stellar.signerPublicKey && config.stellar.signerPublicKey !== signerKeypair.publicKey()) {
-      throw new SorobanSignerConfigError(
-        'Configured STELLAR_SETTLEMENT_SIGNER_PUBLIC_KEY does not match secret key.'
-      );
-    }
-
-    // 4. Resolve source account sequence from network
     const server = this.sorobanClient.getRawServer();
     let accountResponse;
     try {
@@ -103,35 +108,30 @@ export class SorobanTransactionService {
     }
 
     const account = new Account(signerPublicKey, accountResponse.sequenceNumber());
-
-    // 5. Parse contract parameters
     const settlementIdU64 = parseSettlementIdToU64(params.settlementId);
     const amountStroops = parseAmountToStroops(params.amount);
     const sourceAddress =
-  !params.source || params.source === 'LUMINA_TREASURY'
-    ? signerPublicKey
-    : params.source;
+      !params.source || params.source === 'LUMINA_TREASURY'
+        ? signerPublicKey
+        : params.source;
 
-const destinationAddress = params.destination;
+    const destinationAddress = params.destination;
 
-if (!StrKey.isValidEd25519PublicKey(sourceAddress)) {
-  throw new SorobanSubmissionError(
-    `Invalid source Stellar address: ${sourceAddress}`
-  );
-}
+    if (!StrKey.isValidEd25519PublicKey(sourceAddress)) {
+      throw new SorobanSubmissionError(`Invalid source Stellar address: ${sourceAddress}`);
+    }
 
     if (!destinationAddress || !StrKey.isValidEd25519PublicKey(destinationAddress)) {
       throw new SorobanSubmissionError(`Invalid destination Stellar address: ${destinationAddress}`);
     }
 
     const assetAddress =
-  params.asset && StrKey.isValidContract(params.asset)
-    ? params.asset
-    : stellarConfig.usdcContractId;
+      params.asset && StrKey.isValidContract(params.asset)
+        ? params.asset
+        : stellarConfig.usdcContractId;
 
     const contract = new Contract(contractId);
 
-    // 6. Build Soroban invocation operation (create_settlement)
     const tx: Transaction = new TransactionBuilder(account, {
       fee: '100000',
       networkPassphrase: stellarConfig.passphrase,
@@ -149,7 +149,6 @@ if (!StrKey.isValidEd25519PublicKey(sourceAddress)) {
       .setTimeout(30)
       .build();
 
-    // 7. Simulate transaction
     const simulation = await this.sorobanClient.simulateTransaction(tx);
 
     if (rpc.Api.isSimulationError(simulation)) {
@@ -162,14 +161,43 @@ if (!StrKey.isValidEd25519PublicKey(sourceAddress)) {
       throw new SorobanSimulationError('Soroban transaction simulation failed to execute successfully.');
     }
 
-    // 8. Assemble prepared transaction with simulation footprint and fees
     const preparedTx = rpc.assembleTransaction(tx, simulation).build();
 
-    // 9. Sign transaction with backend Testnet signer
-    preparedTx.sign(signerKeypair);
+    const context: AuthorizationPolicyContext = {
+      settlementId: params.settlementId,
+      orderId: params.orderId,
+      expectedSource: sourceAddress,
+      expectedDestination: destinationAddress,
+      expectedAmountStroops: amountStroops,
+      expectedAssetContract: assetAddress,
+      expectedVaultContract: contractId,
+    };
 
-    // 10. Submit to Soroban RPC
-    const sendResponse = await this.sorobanClient.sendTransaction(preparedTx);
+    return {
+      unsignedTransactionXdr: preparedTx.toXDR(),
+      context,
+    };
+  }
+
+  /**
+   * Step 2: Policy Validation & Cryptographic Signing via Signer Interface.
+   */
+  public async signSettlementTransaction(
+    request: SignTransactionRequest,
+    customSigner?: ITransactionSigner
+  ): Promise<SignTransactionResponse> {
+    const signer = customSigner || this.transactionSigner;
+    return signer.signTransaction(request);
+  }
+
+  /**
+   * Step 3: Broadcast Pre-Signed Transaction XDR to Soroban RPC.
+   */
+  public async submitSignedSettlementTransaction(
+    signedTransactionXdr: string
+  ): Promise<{ transactionHash: string }> {
+    const tx = TransactionBuilder.fromXDR(signedTransactionXdr, stellarConfig.passphrase);
+    const sendResponse = await this.sorobanClient.sendTransaction(tx as Transaction);
 
     if (sendResponse.status === 'ERROR') {
       throw new SorobanSubmissionError(
@@ -180,5 +208,17 @@ if (!StrKey.isValidEd25519PublicKey(sourceAddress)) {
     return {
       transactionHash: sendResponse.hash,
     };
+  }
+
+  /**
+   * Orchestrated Settlement Flow (Build -> Policy Validate & Sign -> Submit).
+   */
+  public async buildAndSubmitSettlementTransaction(
+    params: SubmitSettlementParams,
+    customSigner?: ITransactionSigner
+  ): Promise<{ transactionHash: string }> {
+    const prepared = await this.buildUnsignedSettlementTransaction(params);
+    const signedResult = await this.signSettlementTransaction(prepared, customSigner);
+    return this.submitSignedSettlementTransaction(signedResult.signedTransactionXdr);
   }
 }
