@@ -3,6 +3,16 @@ export interface SignerIdentity {
   keyId: string;
   providerType: 'TESTNET_LOCAL' | 'AWS_KMS' | 'GCP_KMS' | 'FIREBLOCKS';
   networkPassphrase: string;
+  expectedSourceAccount?: string;
+}
+
+export interface SignerHealthResult {
+  healthy: boolean;
+  providerType: string;
+  publicKey: string;
+  keyArnOrId: string;
+  latencyMs: number;
+  error?: string;
 }
 
 export interface AuthorizationPolicyContext {

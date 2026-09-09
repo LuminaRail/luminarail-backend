@@ -43,9 +43,9 @@ describe('MAINNET-04: Signer Abstraction & TestnetLocalSigner Test Suite', () =>
     expect(() => resolveTransactionSigner()).toThrow('cannot be used in production environment');
   });
 
-  it('4. resolveTransactionSigner throws unimplemented error for production KMS providers', () => {
-    (config.stellar as any).signerProvider = 'aws_kms';
-    expect(() => resolveTransactionSigner()).toThrow("Provider 'aws_kms' is not yet implemented");
+  it('4. resolveTransactionSigner throws unimplemented error for unimplemented KMS providers', () => {
+    (config.stellar as any).signerProvider = 'gcp_kms';
+    expect(() => resolveTransactionSigner()).toThrow("Provider 'gcp_kms' is not yet implemented");
   });
 
   it('5. Secret key is never logged or printed in string representation of identity', async () => {

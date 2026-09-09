@@ -59,6 +59,9 @@ export const envSchema = z.object({
   MAX_NGN_AMOUNT: z.string().transform((val) => parseFloat(val)).default('10000000'),
   MAX_QUOTE_USDC_AMOUNT: z.string().transform((val) => parseFloat(val)).default('10000'),
   STELLAR_SIGNER_PROVIDER: z.enum(['testnet_local', 'aws_kms', 'gcp_kms', 'fireblocks']).default('testnet_local'),
+  AWS_REGION: z.string().optional().default('us-east-1'),
+  STELLAR_KMS_KEY_ARN: z.string().optional().default(''),
+  AWS_KMS_SIGNING_KEY_ID: z.string().optional().default(''),
   PRODUCTION_SETTLEMENT_ENABLED: z.string().optional().transform((val) => val === 'true' || val === '1').default('false'),
   MAX_SINGLE_SETTLEMENT_USDC: z.string().transform((val) => parseFloat(val)).default('10000'),
   MAX_HOURLY_OUTFLOW_USDC: z.string().transform((val) => parseFloat(val)).default('50000'),
@@ -66,6 +69,17 @@ export const envSchema = z.object({
   MIN_SETTLEMENT_USDC: z.string().transform((val) => parseFloat(val)).default('1'),
   TREASURY_LOW_BALANCE_THRESHOLD: z.string().transform((val) => parseFloat(val)).default('5000'),
   EMERGENCY_GLOBAL_PAUSE: z.string().transform((val) => val === 'true' || val === '1').default('false'),
+}).refine((data) => {
+  if (data.STELLAR_SIGNER_PROVIDER === 'aws_kms') {
+    const keyArn = data.STELLAR_KMS_KEY_ARN || data.AWS_KMS_SIGNING_KEY_ID;
+    if (!keyArn || keyArn.trim() === '') {
+      return false;
+    }
+  }
+  return true;
+}, {
+  message: 'STELLAR_KMS_KEY_ARN or AWS_KMS_SIGNING_KEY_ID is required when STELLAR_SIGNER_PROVIDER is "aws_kms".',
+  path: ['STELLAR_KMS_KEY_ARN'],
 }).refine((data) => {
   if (data.NGN_PROVIDER === 'paystack' && (!data.PAYSTACK_SECRET_KEY || data.PAYSTACK_SECRET_KEY.trim() === '')) {
     return false;
@@ -184,6 +198,8 @@ export const config = {
     signerPublicKey: envData.STELLAR_SETTLEMENT_SIGNER_PUBLIC_KEY,
     signerSecretKey: envData.STELLAR_SETTLEMENT_SIGNER_SECRET_KEY,
     signerProvider: envData.STELLAR_SIGNER_PROVIDER,
+    kmsKeyArn: envData.STELLAR_KMS_KEY_ARN || envData.AWS_KMS_SIGNING_KEY_ID,
+    awsRegion: envData.AWS_REGION,
   },
   treasury: {
     maxSingleSettlementUsdc: envData.MAX_SINGLE_SETTLEMENT_USDC,

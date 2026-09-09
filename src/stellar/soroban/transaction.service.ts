@@ -17,9 +17,13 @@ import {
   SorobanContractConfigError,
 } from '../../errors/index.js';
 import { SubmitSettlementParams } from '../settlement.executor.js';
-import { ITransactionSigner } from '../signer/signer.interface.js';
-import { resolveTransactionSigner } from '../signer/testnet-local.signer.js';
-import { AuthorizationPolicyContext, SignTransactionRequest, SignTransactionResponse } from '../signer/types.js';
+import {
+  ITransactionSigner,
+  resolveTransactionSigner,
+  AuthorizationPolicyContext,
+  SignTransactionRequest,
+  SignTransactionResponse,
+} from '../signer/index.js';
 
 export function parseSettlementIdToU64(settlementId: string): bigint {
   const numericPart = settlementId.replace(/\D/g, '');
