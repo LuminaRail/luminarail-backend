@@ -3,6 +3,8 @@ import { prisma } from '../db/prisma.js';
 import { SettlementService } from '../modules/settlements/settlements.service.js';
 import { SettlementExecutor } from '../stellar/settlement.executor.js';
 import { LiveSettlementExecutor } from '../stellar/live-settlement.executor.js';
+import { config } from '../config/index.js';
+import { AuditService } from '../modules/audit/audit.service.js';
 
 export interface ProcessPendingSettlementsOptions {
   batchSize?: number;
@@ -30,6 +32,16 @@ export class SettlementWorker {
   public async processPendingOrders(
     options: ProcessPendingSettlementsOptions = {}
   ): Promise<ProcessedSettlementResult[]> {
+    if (config.treasury.emergencyGlobalPause) {
+      await AuditService.log({
+        actor: 'system-worker',
+        action: 'EMERGENCY_PAUSE_ENCOUNTERED',
+        resource: 'SettlementWorker',
+        details: { message: 'Settlement worker execution paused due to EMERGENCY_GLOBAL_PAUSE.' },
+      });
+      return [];
+    }
+
     const batchSize = options.batchSize || 10;
     const stopAtSubmitting = options.stopAtSubmitting ?? false;
 

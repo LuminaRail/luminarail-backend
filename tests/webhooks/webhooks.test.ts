@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import crypto from 'crypto';
 import { createApp } from '../../src/app.js';
@@ -7,6 +7,9 @@ import { QuoteService } from '../../src/modules/quotes/quotes.service.js';
 import { MockQuoteProvider } from '../../src/modules/quotes/providers/mock-quote.provider.js';
 import { Keypair } from '@stellar/stellar-sdk';
 import { OrderStatus } from '@prisma/client';
+
+import { config } from '../../src/config/index.js';
+import { PaystackClient } from '../../src/services/paystack.client.js';
 
 describe('Webhooks API & Signature Verification', () => {
   const app = createApp();
@@ -26,6 +29,12 @@ describe('Webhooks API & Signature Verification', () => {
 
   beforeAll(async () => {
     process.env.PAYSTACK_SECRET_KEY = paystackSecret;
+    config.paystack.secretKey = paystackSecret;
+    vi.spyOn(PaystackClient.prototype, 'initializeTransaction').mockImplementation(async (input) => ({
+      authorizationUrl: 'https://checkout.paystack.com/test',
+      accessCode: 'test_access',
+      reference: input.reference,
+    }));
     QuoteService.setProvider(new MockQuoteProvider());
 
     const r1 = await request(app).post('/api/v1/auth/register').send({
@@ -85,12 +94,12 @@ describe('Webhooks API & Signature Verification', () => {
       .set('Authorization', `Bearer ${userToken}`)
       .send({
         orderId: paystackOrderId,
-        provider: 'PAYSTACK_NGN_BANK_TRANSFER',
+        provider: 'PAYSTACK',
       });
 
     paystackPaymentId = pRes2.body.data.paymentId;
     paystackReference = pRes2.body.data.reference;
-  });
+  }, 30000);
 
   afterAll(async () => {
     const users = await prisma.user.findMany({

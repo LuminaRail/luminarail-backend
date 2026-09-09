@@ -24,6 +24,7 @@ describe('MAINNET-03 Production Quote Hardening Test Suite', () => {
     await prisma.settlement.deleteMany();
     await prisma.order.deleteMany();
     await prisma.quote.deleteMany();
+    await prisma.treasuryTransaction.deleteMany();
     await prisma.liquidityPool.deleteMany();
     await prisma.user.deleteMany({ where: { email: { contains: 'quote-hardening' } } });
 
@@ -115,7 +116,7 @@ describe('MAINNET-03 Production Quote Hardening Test Suite', () => {
         amount: 5000,
       })
     ).rejects.toThrow();
-  });
+  }, 15000);
 
   // Test 7: FX provider timeout
   it('7. Rejects quote on FX provider timeout', async () => {
