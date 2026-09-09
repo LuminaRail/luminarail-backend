@@ -46,8 +46,18 @@ enum OrderStatus {
   COMPLETED
   FAILED
   CANCELLED
+  REFUND_PENDING
   REFUNDED
+  REFUND_FAILED
   EXPIRED
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
 }
 
 enum LiquidityReservationStatus {
@@ -124,6 +134,7 @@ model User {
   settlements   Settlement[]
   auditLogs     AuditLog[]
   notifications Notification[]
+  refunds       Refund[]
 
   @@map("users")
 }
@@ -216,6 +227,7 @@ model Order {
   settlements       Settlement[]
   transactions      Transaction[]
   reservation       LiquidityReservation?
+  refunds           Refund[]
 
   @@map("orders")
 }
@@ -258,6 +270,7 @@ model Payment {
   user                User                 @relation(fields: [userId], references: [id])
   paymentProvider     PaymentProvider?     @relation(fields: [providerId], references: [id])
   providerTransaction ProviderTransaction?
+  refunds             Refund[]
 
   @@map("payments")
 }
@@ -454,4 +467,37 @@ model TreasuryTransaction {
   pool          LiquidityPool           @relation(fields: [poolId], references: [id])
 
   @@map("treasury_transactions")
+}
+
+model Refund {
+  id                String       @id @default(uuid())
+  orderId           String       @map("order_id")
+  paymentId         String?      @map("payment_id")
+  userId            String       @map("user_id")
+  amount            Decimal      @db.Decimal(18, 4)
+  currency          String       @default("NGN")
+  reason            String
+  status            RefundStatus @default(PENDING)
+  idempotencyKey    String       @unique @map("idempotency_key")
+  paystackRefundId  String?      @map("paystack_refund_id")
+  providerReference String?      @map("provider_reference")
+  failureReason     String?      @map("failure_reason")
+  metadata          String?
+  initiatedBy       String?      @map("initiated_by")
+  initiatedAt       DateTime?    @map("initiated_at")
+  completedAt       DateTime?    @map("completed_at")
+  failedAt          DateTime?    @map("failed_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  order             Order        @relation(fields: [orderId], references: [id])
+  payment           Payment?     @relation(fields: [paymentId], references: [id])
+  user              User         @relation(fields: [userId], references: [id])
+
+  @@index([orderId])
+  @@index([paymentId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("refunds")
 }

@@ -188,3 +188,27 @@ export class SorobanContractConfigError extends StellarError {
     super(message, 500, 'SOROBAN_CONTRACT_CONFIG_ERROR');
   }
 }
+
+export class RefundError extends AppError {
+  constructor(message = 'Refund error', statusCode = 400, errorCode = 'REFUND_ERROR', details?: unknown) {
+    super(message, statusCode, errorCode, details);
+  }
+}
+
+export class RefundNotFoundError extends RefundError {
+  constructor(identifier: string) {
+    super(`Refund not found: ${identifier}`, 404, 'REFUND_NOT_FOUND');
+  }
+}
+
+export class InvalidRefundStateError extends RefundError {
+  constructor(message = 'Invalid refund state transition') {
+    super(message, 400, 'INVALID_REFUND_STATE');
+  }
+}
+
+export class DuplicateRefundError extends RefundError {
+  constructor(message = 'Duplicate refund request detected') {
+    super(message, 409, 'DUPLICATE_REFUND');
+  }
+}

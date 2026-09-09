@@ -1,4 +1,4 @@
-import { PaymentStatus, PaymentType } from '@prisma/client';
+import { PaymentStatus, PaymentType, RefundStatus } from '@prisma/client';
 
 export interface CreatePaymentRequest {
   orderId: string;
@@ -56,6 +56,28 @@ export interface NormalizedPayoutResponse {
   rawResponse?: Record<string, unknown>;
 }
 
+export interface CreateRefundRequest {
+  refundId: string;
+  orderId: string;
+  paymentReference: string;
+  amount: string;
+  currency: string;
+  reason: string;
+  idempotencyKey?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface NormalizedRefundResponse {
+  provider: string;
+  providerRefundId: string;
+  status: RefundStatus;
+  amount: string;
+  currency: string;
+  failureReason?: string;
+  metadata?: Record<string, unknown>;
+  rawResponse?: Record<string, unknown>;
+}
+
 export interface WebhookEventPayload {
   eventId: string;
   eventType: string;
@@ -73,6 +95,7 @@ export interface IPaymentProvider {
   verifyPayment(providerPaymentId: string, params?: Record<string, unknown>): Promise<NormalizedPaymentResponse>;
   createPayout(request: CreatePayoutRequest): Promise<NormalizedPayoutResponse>;
   getPayoutStatus(providerPayoutId: string): Promise<NormalizedPayoutResponse>;
+  processRefund(request: CreateRefundRequest): Promise<NormalizedRefundResponse>;
   verifyWebhookSignature(headers: Record<string, string | string[] | undefined>, rawBody: string | Buffer): boolean;
   parseWebhookEvent(headers: Record<string, string | string[] | undefined>, body: any, rawBody?: string | Buffer): WebhookEventPayload;
 }

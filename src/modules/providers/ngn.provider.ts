@@ -1,11 +1,13 @@
 import crypto from 'crypto';
-import { PaymentStatus } from '@prisma/client';
+import { PaymentStatus, RefundStatus } from '@prisma/client';
 import {
   IPaymentProvider,
   CreatePaymentRequest,
   NormalizedPaymentResponse,
   CreatePayoutRequest,
   NormalizedPayoutResponse,
+  CreateRefundRequest,
+  NormalizedRefundResponse,
   WebhookEventPayload,
   PaymentInstruction,
 } from './paymentProvider.interface.js';
@@ -172,6 +174,44 @@ export class NgnPaymentProvider implements IPaymentProvider {
       status: PaymentStatus.SUCCEEDED,
       amount: '0.0000',
       currency: 'NGN',
+    };
+  }
+
+  public async processRefund(request: CreateRefundRequest): Promise<NormalizedRefundResponse> {
+    const isSimulatedFailure = request.reason.includes('simulated_failure');
+    const isNetworkTimeout = request.reason.includes('simulated_network_error');
+
+    if (isNetworkTimeout) {
+      return {
+        provider: this.providerId,
+        providerRefundId: `ngn_ambiguous_${Date.now()}`,
+        status: RefundStatus.PROCESSING,
+        amount: request.amount,
+        currency: request.currency,
+        failureReason: 'NGN Provider Network Timeout',
+        metadata: { ambiguousNetworkFailure: true },
+      };
+    }
+
+    if (isSimulatedFailure) {
+      return {
+        provider: this.providerId,
+        providerRefundId: `ngn_ref_fail_${Date.now()}`,
+        status: RefundStatus.FAILED,
+        amount: request.amount,
+        currency: request.currency,
+        failureReason: 'NGN Provider Refund Rejected',
+      };
+    }
+
+    const providerRefundId = `ngn_ref_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    return {
+      provider: this.providerId,
+      providerRefundId,
+      status: RefundStatus.SUCCEEDED,
+      amount: request.amount,
+      currency: request.currency,
+      metadata: { reference: request.paymentReference, reason: request.reason },
     };
   }
 
