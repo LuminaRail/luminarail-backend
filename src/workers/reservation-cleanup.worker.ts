@@ -1,6 +1,8 @@
 import { LiquidityReservationStatus, OrderStatus } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { LiquidityService } from '../modules/liquidity/liquidity.service.js';
+import { DistributedLockService } from '../infrastructure/locks/distributed-lock.service.js';
+import { config } from '../config/index.js';
 
 export interface ProcessExpiredReservationsOptions {
   batchSize?: number;
@@ -22,28 +24,44 @@ export class ReservationCleanupWorker {
   public async processExpiredReservations(
     options: ProcessExpiredReservationsOptions = {}
   ): Promise<ProcessedExpiredReservationResult[]> {
-    const batchSize = options.batchSize || 20;
-    const now = new Date();
-
-    const expiredReservations = await prisma.liquidityReservation.findMany({
-      where: {
-        status: LiquidityReservationStatus.RESERVED,
-        expiresAt: { lte: now },
-      },
-      take: batchSize,
-      orderBy: { expiresAt: 'asc' },
+    const sweepLockKey = 'lock:worker:reservation-cleanup';
+    const sweepLock = await DistributedLockService.acquire(sweepLockKey, {
+      ttlMs: 30000,
+      workerId: DistributedLockService.getWorkerProcessId(),
     });
 
-    const results: ProcessedExpiredReservationResult[] = [];
-
-    for (const reservation of expiredReservations) {
-      const result = await this.processSingleReservation(reservation.id);
-      if (result) {
-        results.push(result);
-      }
+    if (!sweepLock && (config.redis?.requireDistributedLocks || config.env === 'production')) {
+      return []; // Skip sweep if another process holds the sweep lock
     }
 
-    return results;
+    try {
+      const batchSize = options.batchSize || 20;
+      const now = new Date();
+
+      const expiredReservations = await prisma.liquidityReservation.findMany({
+        where: {
+          status: LiquidityReservationStatus.RESERVED,
+          expiresAt: { lte: now },
+        },
+        take: batchSize,
+        orderBy: { expiresAt: 'asc' },
+      });
+
+      const results: ProcessedExpiredReservationResult[] = [];
+
+      for (const reservation of expiredReservations) {
+        const result = await this.processSingleReservation(reservation.id);
+        if (result) {
+          results.push(result);
+        }
+      }
+
+      return results;
+    } finally {
+      if (sweepLock) {
+        await DistributedLockService.release(sweepLock);
+      }
+    }
   }
 
   /**
