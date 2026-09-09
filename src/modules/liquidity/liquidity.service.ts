@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 import { prisma } from '../../db/prisma.js';
 import { BadRequestError, NotFoundError } from '../../errors/index.js';
+import { TreasuryTelemetryService } from './treasury-telemetry.service.js';
 
 export interface ReserveLiquidityParams {
   poolId: string;
@@ -25,11 +26,12 @@ export class LiquidityService {
     });
 
     if (existing) {
+      await TreasuryTelemetryService.evaluatePoolBalance(existing);
       return existing;
     }
 
     // Default pool creation with 10,000 USDC initial capacity for testnet environment
-    return prisma.liquidityPool.create({
+    const created = await prisma.liquidityPool.create({
       data: {
         asset,
         network,
@@ -39,6 +41,8 @@ export class LiquidityService {
         minThreshold: new Prisma.Decimal('1000.0000000'),
       },
     });
+    await TreasuryTelemetryService.evaluatePoolBalance(created);
+    return created;
   }
 
   /**
@@ -89,13 +93,15 @@ export class LiquidityService {
     }
 
     // Update pool balances
-    await tx.liquidityPool.update({
+    const updatedPool = await tx.liquidityPool.update({
       where: { id: pool.id },
       data: {
         reservedBalance: newReserved,
         availableBalance: newAvailable,
       },
     });
+
+    await TreasuryTelemetryService.evaluatePoolBalance(updatedPool);
 
     const expiryMinutes = params.expiryMinutes || 15;
     const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
@@ -117,7 +123,19 @@ export class LiquidityService {
    * RESERVED -> CONFIRMED. Does not release or consume funds.
    */
   static async confirmReservation(orderId: string): Promise<LiquidityReservation | null> {
-    const reservation = await prisma.liquidityReservation.findUnique({
+    return prisma.$transaction(async (tx) => {
+      return LiquidityService.confirmReservationInTx(tx, orderId);
+    });
+  }
+
+  /**
+   * Transactional variant of confirmReservation.
+   */
+  static async confirmReservationInTx(
+    tx: Prisma.TransactionClient,
+    orderId: string
+  ): Promise<LiquidityReservation | null> {
+    const reservation = await tx.liquidityReservation.findUnique({
       where: { orderId },
     });
 
@@ -136,7 +154,7 @@ export class LiquidityService {
       return reservation;
     }
 
-    return prisma.liquidityReservation.update({
+    return tx.liquidityReservation.update({
       where: { id: reservation.id },
       data: { status: LiquidityReservationStatus.CONFIRMED },
     });
@@ -189,7 +207,7 @@ export class LiquidityService {
       const safeReserved = newReserved.lt(0) ? new Prisma.Decimal(0) : newReserved;
       const safeAvailable = safeTotal.minus(safeReserved);
 
-      await tx.liquidityPool.update({
+      const updatedPool = await tx.liquidityPool.update({
         where: { id: pool.id },
         data: {
           totalBalance: safeTotal,
@@ -197,6 +215,8 @@ export class LiquidityService {
           availableBalance: safeAvailable,
         },
       });
+
+      await TreasuryTelemetryService.evaluatePoolBalance(updatedPool);
 
       const updatedReservation = await tx.liquidityReservation.update({
         where: { id: reservation.id },
@@ -228,45 +248,58 @@ export class LiquidityService {
     targetStatus: LiquidityReservationStatus = LiquidityReservationStatus.CANCELLED_RELEASED
   ): Promise<LiquidityReservation | null> {
     return prisma.$transaction(async (tx) => {
-      const reservation = await tx.liquidityReservation.findUnique({
-        where: { orderId },
-      });
+      return LiquidityService.releaseReservationInTx(tx, orderId, targetStatus);
+    });
+  }
 
-      if (!reservation) {
-        return null;
-      }
+  /**
+   * Transactional variant of releaseReservation.
+   */
+  static async releaseReservationInTx(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    targetStatus: LiquidityReservationStatus = LiquidityReservationStatus.CANCELLED_RELEASED
+  ): Promise<LiquidityReservation | null> {
+    const reservation = await tx.liquidityReservation.findUnique({
+      where: { orderId },
+    });
 
-      if (
-        reservation.status === LiquidityReservationStatus.CONSUMED ||
-        reservation.status === LiquidityReservationStatus.EXPIRED_RELEASED ||
-        reservation.status === LiquidityReservationStatus.CANCELLED_RELEASED
-      ) {
-        return reservation;
-      }
+    if (!reservation) {
+      return null;
+    }
 
-      // Lock pool row
-      await tx.$queryRaw`SELECT * FROM "liquidity_pools" WHERE "id" = ${reservation.poolId} FOR UPDATE`;
+    if (
+      reservation.status === LiquidityReservationStatus.CONSUMED ||
+      reservation.status === LiquidityReservationStatus.EXPIRED_RELEASED ||
+      reservation.status === LiquidityReservationStatus.CANCELLED_RELEASED
+    ) {
+      return reservation;
+    }
 
-      const pool = await tx.liquidityPool.findUniqueOrThrow({
-        where: { id: reservation.poolId },
-      });
+    // Lock pool row
+    await tx.$queryRaw`SELECT * FROM "liquidity_pools" WHERE "id" = ${reservation.poolId} FOR UPDATE`;
 
-      const newReserved = pool.reservedBalance.minus(reservation.amount);
-      const safeReserved = newReserved.lt(0) ? new Prisma.Decimal(0) : newReserved;
-      const newAvailable = pool.totalBalance.minus(safeReserved);
+    const pool = await tx.liquidityPool.findUniqueOrThrow({
+      where: { id: reservation.poolId },
+    });
 
-      await tx.liquidityPool.update({
-        where: { id: pool.id },
-        data: {
-          reservedBalance: safeReserved,
-          availableBalance: newAvailable,
-        },
-      });
+    const newReserved = pool.reservedBalance.minus(reservation.amount);
+    const safeReserved = newReserved.lt(0) ? new Prisma.Decimal(0) : newReserved;
+    const newAvailable = pool.totalBalance.minus(safeReserved);
 
-      return tx.liquidityReservation.update({
-        where: { id: reservation.id },
-        data: { status: targetStatus },
-      });
+    const updatedPool = await tx.liquidityPool.update({
+      where: { id: pool.id },
+      data: {
+        reservedBalance: safeReserved,
+        availableBalance: newAvailable,
+      },
+    });
+
+    await TreasuryTelemetryService.evaluatePoolBalance(updatedPool);
+
+    return tx.liquidityReservation.update({
+      where: { id: reservation.id },
+      data: { status: targetStatus },
     });
   }
 
@@ -323,13 +356,15 @@ export class LiquidityService {
         throw new BadRequestError('Adjustment would result in negative available balance');
       }
 
-      await tx.liquidityPool.update({
+      const updatedPool = await tx.liquidityPool.update({
         where: { id: poolId },
         data: {
           totalBalance: newTotal,
           availableBalance: newAvailable,
         },
       });
+
+      await TreasuryTelemetryService.evaluatePoolBalance(updatedPool);
 
       return tx.treasuryTransaction.create({
         data: {

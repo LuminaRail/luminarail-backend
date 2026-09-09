@@ -195,6 +195,7 @@ describe('Phase 6A — Production Network, Configuration & USDC Safety', () => {
       STELLAR_SIGNER_PROVIDER: 'aws_kms',
       STELLAR_KMS_KEY_ARN: 'arn:aws:kms:us-east-1:123456789012:key/test-kms-key-id',
       JWT_SECRET: 'a_very_secure_production_jwt_secret_32_chars_long',
+      STELLAR_CONTRACT_ADMIN_GOVERNANCE_TYPE: 'multisig',
       PRODUCTION_SETTLEMENT_ENABLED: 'true',
     });
     if (!res.success) {

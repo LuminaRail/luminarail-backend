@@ -72,6 +72,10 @@ export const envSchema = z.object({
   MAX_DAILY_OUTFLOW_USDC: z.string().transform((val) => parseFloat(val)).default('200000'),
   MIN_SETTLEMENT_USDC: z.string().transform((val) => parseFloat(val)).default('1'),
   TREASURY_LOW_BALANCE_THRESHOLD: z.string().transform((val) => parseFloat(val)).default('5000'),
+  TREASURY_WARN_THRESHOLD_USDC: z.string().transform((val) => parseFloat(val)).default('5000'),
+  TREASURY_CRITICAL_THRESHOLD_USDC: z.string().transform((val) => parseFloat(val)).default('1000'),
+  STELLAR_CONTRACT_ADMIN_GOVERNANCE_TYPE: z.enum(['single_key', 'multisig', 'dao']).default('single_key'),
+  STELLAR_CONTRACT_ADMIN_ADDRESS: z.string().optional().default(''),
   EMERGENCY_GLOBAL_PAUSE: z.string().transform((val) => val === 'true' || val === '1').default('false'),
 }).refine((data) => {
   if (data.STELLAR_SIGNER_PROVIDER === 'aws_kms') {
@@ -169,6 +173,23 @@ export const envSchema = z.object({
 }, {
   message: 'PRODUCTION_SETTLEMENT_ENABLED requires mainnet network, Circle mainnet USDC issuer, and non-local signer provider.',
   path: ['PRODUCTION_SETTLEMENT_ENABLED'],
+}).refine((data) => {
+  if (data.TREASURY_CRITICAL_THRESHOLD_USDC > data.TREASURY_WARN_THRESHOLD_USDC) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'TREASURY_CRITICAL_THRESHOLD_USDC must be less than or equal to TREASURY_WARN_THRESHOLD_USDC.',
+  path: ['TREASURY_CRITICAL_THRESHOLD_USDC'],
+}).refine((data) => {
+  const isMainnet = data.STELLAR_NETWORK === 'public' || data.STELLAR_NETWORK === 'mainnet';
+  if ((data.NODE_ENV === 'production' || isMainnet) && data.STELLAR_CONTRACT_ADMIN_GOVERNANCE_TYPE === 'single_key') {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Soroban smart contract administration cannot use single_key governance in production environment or on mainnet. Must be multisig or dao.',
+  path: ['STELLAR_CONTRACT_ADMIN_GOVERNANCE_TYPE'],
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -211,6 +232,8 @@ export const config = {
     signerProvider: envData.STELLAR_SIGNER_PROVIDER,
     kmsKeyArn: envData.STELLAR_KMS_KEY_ARN || envData.AWS_KMS_SIGNING_KEY_ID,
     awsRegion: envData.AWS_REGION,
+    contractAdminGovernanceType: envData.STELLAR_CONTRACT_ADMIN_GOVERNANCE_TYPE,
+    contractAdminAddress: envData.STELLAR_CONTRACT_ADMIN_ADDRESS,
   },
   treasury: {
     maxSingleSettlementUsdc: envData.MAX_SINGLE_SETTLEMENT_USDC,
@@ -218,6 +241,8 @@ export const config = {
     maxDailyOutflowUsdc: envData.MAX_DAILY_OUTFLOW_USDC,
     minSettlementUsdc: envData.MIN_SETTLEMENT_USDC,
     lowBalanceThreshold: envData.TREASURY_LOW_BALANCE_THRESHOLD,
+    warnThresholdUsdc: envData.TREASURY_WARN_THRESHOLD_USDC,
+    criticalThresholdUsdc: envData.TREASURY_CRITICAL_THRESHOLD_USDC,
     emergencyGlobalPause: envData.EMERGENCY_GLOBAL_PAUSE,
   },
   jwt: {
