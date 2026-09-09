@@ -5,7 +5,7 @@ import { StrKey } from '@stellar/stellar-sdk';
 dotenv.config();
 
 export const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  NODE_ENV: z.enum(['development', 'test', 'staging', 'production']).default('development'),
   PORT: z.string().transform((val) => parseInt(val, 10)).default('4000'),
   API_PREFIX: z.string().default('/api/v1'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL environment variable is required'),
@@ -59,6 +59,7 @@ export const envSchema = z.object({
   MAX_NGN_AMOUNT: z.string().transform((val) => parseFloat(val)).default('10000000'),
   MAX_QUOTE_USDC_AMOUNT: z.string().transform((val) => parseFloat(val)).default('10000'),
   STELLAR_SIGNER_PROVIDER: z.enum(['testnet_local', 'aws_kms', 'gcp_kms', 'fireblocks']).default('testnet_local'),
+  PRODUCTION_SETTLEMENT_ENABLED: z.string().optional().transform((val) => val === 'true' || val === '1').default('false'),
   MAX_SINGLE_SETTLEMENT_USDC: z.string().transform((val) => parseFloat(val)).default('10000'),
   MAX_HOURLY_OUTFLOW_USDC: z.string().transform((val) => parseFloat(val)).default('50000'),
   MAX_DAILY_OUTFLOW_USDC: z.string().transform((val) => parseFloat(val)).default('200000'),
@@ -81,6 +82,75 @@ export const envSchema = z.object({
 }, {
   message: 'JWT_SECRET environment variable must be set to a secure key in production mode.',
   path: ['JWT_SECRET'],
+}).refine((data) => {
+  const isMainnet = data.STELLAR_NETWORK === 'public' || data.STELLAR_NETWORK === 'mainnet';
+  if (data.NODE_ENV === 'production' && !isMainnet) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'STELLAR_NETWORK must be set to "public" or "mainnet" when NODE_ENV is "production".',
+  path: ['STELLAR_NETWORK'],
+}).refine((data) => {
+  const isMainnet = data.STELLAR_NETWORK === 'public' || data.STELLAR_NETWORK === 'mainnet';
+  const MAINNET_USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+  if (isMainnet && data.STELLAR_USDC_ISSUER !== MAINNET_USDC_ISSUER) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'STELLAR_USDC_ISSUER must be set to Circle Mainnet Issuer (GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN) for public/mainnet networks.',
+  path: ['STELLAR_USDC_ISSUER'],
+}).refine((data) => {
+  const isMainnet = data.STELLAR_NETWORK === 'public' || data.STELLAR_NETWORK === 'mainnet';
+  const MAINNET_USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+  if (!isMainnet && data.STELLAR_USDC_ISSUER === MAINNET_USDC_ISSUER) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Circle Mainnet USDC Issuer cannot be used when STELLAR_NETWORK is testnet/futurenet.',
+  path: ['STELLAR_USDC_ISSUER'],
+}).refine((data) => {
+  const isMainnet = data.STELLAR_NETWORK === 'public' || data.STELLAR_NETWORK === 'mainnet';
+  const MAINNET_CONTRACT = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
+  if (isMainnet && data.STELLAR_USDC_CONTRACT_ID && data.STELLAR_USDC_CONTRACT_ID !== MAINNET_CONTRACT) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'STELLAR_USDC_CONTRACT_ID must be Circle Mainnet Soroban Contract ID (CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75) when network is public/mainnet.',
+  path: ['STELLAR_USDC_CONTRACT_ID'],
+}).refine((data) => {
+  const isMainnet = data.STELLAR_NETWORK === 'public' || data.STELLAR_NETWORK === 'mainnet';
+  if ((data.NODE_ENV === 'production' || isMainnet) && data.STELLAR_SIGNER_PROVIDER === 'testnet_local') {
+    return false;
+  }
+  return true;
+}, {
+  message: 'STELLAR_SIGNER_PROVIDER cannot be "testnet_local" in production environment or on public/mainnet networks.',
+  path: ['STELLAR_SIGNER_PROVIDER'],
+}).refine((data) => {
+  if (data.NODE_ENV === 'production' && data.NGN_PROVIDER === 'paystack' && data.PAYSTACK_SECRET_KEY.startsWith('sk_test_')) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'PAYSTACK_SECRET_KEY cannot be a test key (sk_test_...) when NODE_ENV is "production".',
+  path: ['PAYSTACK_SECRET_KEY'],
+}).refine((data) => {
+  if (data.PRODUCTION_SETTLEMENT_ENABLED) {
+    const isMainnet = data.STELLAR_NETWORK === 'public' || data.STELLAR_NETWORK === 'mainnet';
+    const MAINNET_USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+    const hasValidSigner = data.STELLAR_SIGNER_PROVIDER !== 'testnet_local';
+    if (!isMainnet || data.STELLAR_USDC_ISSUER !== MAINNET_USDC_ISSUER || !hasValidSigner) {
+      return false;
+    }
+  }
+  return true;
+}, {
+  message: 'PRODUCTION_SETTLEMENT_ENABLED requires mainnet network, Circle mainnet USDC issuer, and non-local signer provider.',
+  path: ['PRODUCTION_SETTLEMENT_ENABLED'],
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -101,6 +171,7 @@ export const config = {
   apiPrefix: envData.API_PREFIX,
   databaseUrl: envData.DATABASE_URL,
   redisUrl: envData.REDIS_URL,
+  productionSettlementEnabled: envData.PRODUCTION_SETTLEMENT_ENABLED,
   stellar: {
     network: envData.STELLAR_NETWORK,
     rpcUrl: envData.STELLAR_RPC_URL,
