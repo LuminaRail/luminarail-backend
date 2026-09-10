@@ -78,17 +78,6 @@ export const envSchema = z.object({
   STELLAR_CONTRACT_ADMIN_ADDRESS: z.string().optional().default(''),
   EMERGENCY_GLOBAL_PAUSE: z.string().transform((val) => val === 'true' || val === '1').default('false'),
 }).refine((data) => {
-  if (data.STELLAR_SIGNER_PROVIDER === 'aws_kms') {
-    const keyArn = data.STELLAR_KMS_KEY_ARN || data.AWS_KMS_SIGNING_KEY_ID;
-    if (!keyArn || keyArn.trim() === '') {
-      return false;
-    }
-  }
-  return true;
-}, {
-  message: 'STELLAR_KMS_KEY_ARN or AWS_KMS_SIGNING_KEY_ID is required when STELLAR_SIGNER_PROVIDER is "aws_kms".',
-  path: ['STELLAR_KMS_KEY_ARN'],
-}).refine((data) => {
   if (data.NGN_PROVIDER === 'paystack' && (!data.PAYSTACK_SECRET_KEY || data.PAYSTACK_SECRET_KEY.trim() === '')) {
     return false;
   }
@@ -144,15 +133,6 @@ export const envSchema = z.object({
   message: 'STELLAR_USDC_CONTRACT_ID must be Circle Mainnet Soroban Contract ID (CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75) when network is public/mainnet.',
   path: ['STELLAR_USDC_CONTRACT_ID'],
 }).refine((data) => {
-  const isMainnet = data.STELLAR_NETWORK === 'public' || data.STELLAR_NETWORK === 'mainnet';
-  if ((data.NODE_ENV === 'production' || isMainnet) && data.STELLAR_SIGNER_PROVIDER === 'testnet_local') {
-    return false;
-  }
-  return true;
-}, {
-  message: 'STELLAR_SIGNER_PROVIDER cannot be "testnet_local" in production environment or on public/mainnet networks.',
-  path: ['STELLAR_SIGNER_PROVIDER'],
-}).refine((data) => {
   if (data.NODE_ENV === 'production' && data.NGN_PROVIDER === 'paystack' && data.PAYSTACK_SECRET_KEY.startsWith('sk_test_')) {
     return false;
   }
@@ -165,13 +145,15 @@ export const envSchema = z.object({
     const isMainnet = data.STELLAR_NETWORK === 'public' || data.STELLAR_NETWORK === 'mainnet';
     const MAINNET_USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
     const hasValidSigner = data.STELLAR_SIGNER_PROVIDER !== 'testnet_local';
-    if (!isMainnet || data.STELLAR_USDC_ISSUER !== MAINNET_USDC_ISSUER || !hasValidSigner) {
+    const hasKmsKey = data.STELLAR_SIGNER_PROVIDER !== 'aws_kms' || Boolean((data.STELLAR_KMS_KEY_ARN || data.AWS_KMS_SIGNING_KEY_ID)?.trim());
+    const hasValidGov = data.STELLAR_CONTRACT_ADMIN_GOVERNANCE_TYPE !== 'single_key';
+    if (!isMainnet || data.STELLAR_USDC_ISSUER !== MAINNET_USDC_ISSUER || !hasValidSigner || !hasKmsKey || !hasValidGov) {
       return false;
     }
   }
   return true;
 }, {
-  message: 'PRODUCTION_SETTLEMENT_ENABLED requires mainnet network, Circle mainnet USDC issuer, and non-local signer provider.',
+  message: 'PRODUCTION_SETTLEMENT_ENABLED requires mainnet network, Circle mainnet USDC issuer, non-local signer provider, valid KMS key ARN, and multisig/dao governance.',
   path: ['PRODUCTION_SETTLEMENT_ENABLED'],
 }).refine((data) => {
   if (data.TREASURY_CRITICAL_THRESHOLD_USDC > data.TREASURY_WARN_THRESHOLD_USDC) {
@@ -181,15 +163,6 @@ export const envSchema = z.object({
 }, {
   message: 'TREASURY_CRITICAL_THRESHOLD_USDC must be less than or equal to TREASURY_WARN_THRESHOLD_USDC.',
   path: ['TREASURY_CRITICAL_THRESHOLD_USDC'],
-}).refine((data) => {
-  const isMainnet = data.STELLAR_NETWORK === 'public' || data.STELLAR_NETWORK === 'mainnet';
-  if ((data.NODE_ENV === 'production' || isMainnet) && data.STELLAR_CONTRACT_ADMIN_GOVERNANCE_TYPE === 'single_key') {
-    return false;
-  }
-  return true;
-}, {
-  message: 'Soroban smart contract administration cannot use single_key governance in production environment or on mainnet. Must be multisig or dao.',
-  path: ['STELLAR_CONTRACT_ADMIN_GOVERNANCE_TYPE'],
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
