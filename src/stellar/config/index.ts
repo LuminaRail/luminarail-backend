@@ -89,6 +89,24 @@ export function assertProductionSettlementSafety(): void {
         `Mainnet settlement safety violation: Paystack test key (sk_test_...) cannot be used for production mainnet settlement.`
       );
     }
+
+    assertContractGovernanceReadiness();
+  }
+}
+
+/**
+ * Asserts Smart Contract Governance Readiness for Mainnet.
+ */
+export function assertContractGovernanceReadiness(): void {
+  const currentNetwork = config.stellar.network.toLowerCase();
+  const isMainnet = currentNetwork === 'public' || currentNetwork === 'mainnet';
+
+  if (isMainnet || config.env === 'production') {
+    if (config.stellar.contractAdminGovernanceType === 'single_key') {
+      throw new SorobanSignerConfigError(
+        `FATAL SECURITY VIOLATION: Soroban smart contract admin cannot be single_key in production mainnet mode. Admin must be multisig or dao governance address.`
+      );
+    }
   }
 }
 
