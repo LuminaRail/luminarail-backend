@@ -1,5 +1,6 @@
 import { config } from './config/index.js';
 import { assertProductionSettlementSafety, assertContractGovernanceReadiness } from './stellar/config/index.js';
+import { SorobanSignerConfigError } from './errors/index.js';
 import { SettlementWorker } from './workers/settlement.worker.js';
 import { ReservationCleanupWorker } from './workers/reservation-cleanup.worker.js';
 import { ReconciliationDaemon } from './workers/reconciliation.daemon.js';
@@ -37,6 +38,22 @@ export class LuminaRailWorkerRunner {
     // Strict Production Configuration & Governance Guard Checks
     assertProductionSettlementSafety();
     assertContractGovernanceReadiness();
+
+    if (config.env === 'production') {
+      if (!config.redisUrl || config.redisUrl.trim() === '') {
+        throw new Error('REDIS_URL environment variable is required for production worker process.');
+      }
+      if (config.stellar.signerProvider === 'testnet_local') {
+        throw new SorobanSignerConfigError(
+          'FATAL SECURITY VIOLATION: Local testnet signer (testnet_local) is strictly forbidden for production worker execution.'
+        );
+      }
+      if (config.stellar.signerProvider === 'aws_kms' && (!config.stellar.kmsKeyArn || config.stellar.kmsKeyArn.trim() === '')) {
+        throw new SorobanSignerConfigError(
+          'FATAL SECURITY VIOLATION: STELLAR_KMS_KEY_ARN or AWS_KMS_SIGNING_KEY_ID is required when STELLAR_SIGNER_PROVIDER is "aws_kms".'
+        );
+      }
+    }
 
     // Register process shutdown handlers (SIGTERM / SIGINT)
     ShutdownManager.registerShutdownHandlers();

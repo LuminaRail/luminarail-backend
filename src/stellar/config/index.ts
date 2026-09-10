@@ -84,6 +84,12 @@ export function assertProductionSettlementSafety(): void {
       );
     }
 
+    if (config.stellar.signerProvider === 'aws_kms' && (!config.stellar.kmsKeyArn || config.stellar.kmsKeyArn.trim() === '')) {
+      throw new SorobanSignerConfigError(
+        `FATAL SECURITY VIOLATION: AWS KMS signer key ARN (STELLAR_KMS_KEY_ARN or AWS_KMS_SIGNING_KEY_ID) is required for mainnet settlement.`
+      );
+    }
+
     if (config.ngnProvider === 'paystack' && config.paystack.secretKey.startsWith('sk_test_')) {
       throw new StellarNetworkError(
         `Mainnet settlement safety violation: Paystack test key (sk_test_...) cannot be used for production mainnet settlement.`

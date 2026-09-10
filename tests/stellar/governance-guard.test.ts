@@ -58,13 +58,14 @@ describe('Smart Contract Governance Guard (MAINNET-07 Part 3)', () => {
     (config.stellar as any).network = 'public';
     (config.stellar as any).usdcIssuer = STELLAR_MAINNET_USDC_ISSUER;
     (config.stellar as any).signerProvider = 'aws_kms';
+    (config.stellar as any).kmsKeyArn = 'arn:aws:kms:us-east-1:123456789012:key/test';
     (config.paystack as any).secretKey = 'sk_live_valid_key';
     (config.stellar as any).contractAdminGovernanceType = 'single_key';
 
     expect(() => assertProductionSettlementSafety()).toThrow('Soroban smart contract admin cannot be single_key in production mainnet mode');
   });
 
-  it('Zod env schema refinement rejects single_key governance when STELLAR_NETWORK is public', () => {
+  it('Zod env schema refinement rejects single_key governance when PRODUCTION_SETTLEMENT_ENABLED is true', () => {
     const invalidEnv = {
       NODE_ENV: 'production',
       DATABASE_URL: 'postgresql://localhost:5432/db',
@@ -73,15 +74,16 @@ describe('Smart Contract Governance Guard (MAINNET-07 Part 3)', () => {
       STELLAR_SIGNER_PROVIDER: 'aws_kms',
       STELLAR_KMS_KEY_ARN: 'arn:aws:kms:us-east-1:123456789012:key/test',
       PAYSTACK_SECRET_KEY: 'sk_live_test_key',
+      PRODUCTION_SETTLEMENT_ENABLED: 'true',
       STELLAR_CONTRACT_ADMIN_GOVERNANCE_TYPE: 'single_key', // Invalid in production mainnet!
     };
 
     const parseResult = envSchema.safeParse(invalidEnv);
     expect(parseResult.success).toBe(false);
     if (!parseResult.success) {
-      const issue = parseResult.error.issues.find((i) => i.path.includes('STELLAR_CONTRACT_ADMIN_GOVERNANCE_TYPE'));
+      const issue = parseResult.error.issues.find((i) => i.path.includes('PRODUCTION_SETTLEMENT_ENABLED'));
       expect(issue).toBeDefined();
-      expect(issue?.message).toContain('multisig or dao');
+      expect(issue?.message).toContain('multisig/dao governance');
     }
   });
 

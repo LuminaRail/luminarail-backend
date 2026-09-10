@@ -72,28 +72,30 @@ describe('Phase 6A — Production Network, Configuration & USDC Safety', () => {
     expect(res.success).toBe(false);
   });
 
-  it('6. production + testnet signer rejected', () => {
+  it('6. production + testnet signer rejected when settlement enabled', () => {
     const res = envSchema.safeParse({
       ...baseValidEnv,
       NODE_ENV: 'production',
       STELLAR_NETWORK: 'public',
       STELLAR_USDC_ISSUER: STELLAR_MAINNET_USDC_ISSUER,
       STELLAR_SIGNER_PROVIDER: 'testnet_local', // testnet local signer
+      PRODUCTION_SETTLEMENT_ENABLED: 'true',
       JWT_SECRET: 'a_very_secure_production_jwt_secret_32_chars_long',
     });
     expect(res.success).toBe(false);
     if (!res.success) {
-      expect(res.error.issues.some((i) => i.path.includes('STELLAR_SIGNER_PROVIDER'))).toBe(true);
+      expect(res.error.issues.some((i) => i.path.includes('PRODUCTION_SETTLEMENT_ENABLED'))).toBe(true);
     }
   });
 
-  it('7. production without production signer rejected', () => {
+  it('7. production without production signer rejected when settlement enabled', () => {
     const res = envSchema.safeParse({
       ...baseValidEnv,
       NODE_ENV: 'production',
       STELLAR_NETWORK: 'mainnet',
       STELLAR_USDC_ISSUER: STELLAR_MAINNET_USDC_ISSUER,
       STELLAR_SIGNER_PROVIDER: 'testnet_local',
+      PRODUCTION_SETTLEMENT_ENABLED: 'true',
       JWT_SECRET: 'a_very_secure_production_jwt_secret_32_chars_long',
     });
     expect(res.success).toBe(false);
