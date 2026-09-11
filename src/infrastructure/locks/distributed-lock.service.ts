@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { RedisService } from '../redis/redis.service.js';
 import { config } from '../../config/index.js';
 import { AuditService } from '../../modules/audit/audit.service.js';
+import { WorkerHealthTelemetryService } from '../telemetry/worker-health-telemetry.service.js';
 
 export interface LockOptions {
   ttlMs?: number;
@@ -119,6 +120,9 @@ export class DistributedLockService {
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Redis error';
       console.warn(`⚠️ [DistributedLockService] Redis lock acquisition error for key ${key}: ${errMsg}`);
+
+      // Record lock acquisition failure for worker liveness telemetry.
+      WorkerHealthTelemetryService.recordLockAcquisitionFailure(key);
 
       if (config.redis?.requireDistributedLocks || config.env === 'production') {
         throw new Error(`Distributed lock required but unavailable for key ${key}: ${errMsg}`);

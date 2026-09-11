@@ -239,6 +239,7 @@ All API routes are prefixed with `/api/v1`. Protected routes require an `Authori
 | Category | Method | Path | Auth Required | Purpose |
 |---|---|---|---|---|
 | **Health** | `GET` | `/health` | No | Application health check & Stellar RPC connectivity status |
+| **Worker Liveness** | `GET` | `/health` (worker port, default `4001`) | No | Worker liveness telemetry: 200 healthy / 503 stalled (no secrets) |
 | **Auth** | `POST` | `/api/v1/auth/register` | No | Register a new user account |
 | **Auth** | `POST` | `/api/v1/auth/login` | No | Authenticate user credentials & issue JWT token |
 | **Auth** | `POST` | `/api/v1/auth/logout` | No | Terminate user session |
