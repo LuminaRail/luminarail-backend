@@ -14,6 +14,9 @@ export const envSchema = z.object({
   WORKER_LOCK_HEARTBEAT_MS: z.string().transform((val) => parseInt(val, 10)).default('5000'),
   WORKER_LOCK_ACQUIRE_TIMEOUT_MS: z.string().transform((val) => parseInt(val, 10)).default('3000'),
   REQUIRE_DISTRIBUTED_LOCKS: z.string().optional().transform((val) => val === 'true' || val === '1').default('false'),
+  WORKER_LIVENESS_ENABLED: z.string().optional().transform((val) => val !== 'false' && val !== '0').default('true'),
+  WORKER_LIVENESS_PORT: z.string().transform((val) => parseInt(val, 10)).default('4001'),
+  WORKER_LIVENESS_MAX_SWEEP_AGE_MS: z.string().transform((val) => parseInt(val, 10)).default('120000'),
   STELLAR_NETWORK: z.enum(['testnet', 'futurenet', 'public', 'mainnet']).default('testnet'),
   STELLAR_RPC_URL: z.string().url('STELLAR_RPC_URL must be a valid URL').default('https://soroban-testnet.stellar.org'),
   STELLAR_HORIZON_URL: z.string().url('STELLAR_HORIZON_URL must be a valid URL').default('https://horizon-testnet.stellar.org'),
@@ -189,6 +192,11 @@ export const config = {
     lockHeartbeatMs: envData.WORKER_LOCK_HEARTBEAT_MS,
     lockAcquireTimeoutMs: envData.WORKER_LOCK_ACQUIRE_TIMEOUT_MS,
     requireDistributedLocks: envData.REQUIRE_DISTRIBUTED_LOCKS,
+  },
+  worker: {
+    livenessEnabled: envData.WORKER_LIVENESS_ENABLED,
+    livenessPort: envData.WORKER_LIVENESS_PORT,
+    livenessMaxSweepAgeMs: envData.WORKER_LIVENESS_MAX_SWEEP_AGE_MS,
   },
   productionSettlementEnabled: envData.PRODUCTION_SETTLEMENT_ENABLED,
   stellar: {
